@@ -1,4 +1,6 @@
 //! Sentinel Inference CLI
+//!
+//! Inference path: Prefill → Decode (no separate "encode" stage for the model).
 
 use clap::{Parser, Subcommand};
 use log::info;
@@ -26,34 +28,38 @@ enum Commands {
         #[arg(long, default_value = "small")]
         size: String,
     },
-    /// Run a quick forward pass smoke test
-    Smoke {
-        #[arg(long, default_value = "16")]
-        seq_len: usize,
+    /// Prefill phase — process full prompt, return last-position logits shape
+    Prefill {
+        /// Prompt text
+        #[arg(long, default_value = "Hello Sentinel")]
+        prompt: String,
     },
-    /// Encode text → token IDs
-    Encode {
-        /// Text to encode
-        text: String,
-        /// Add BOS token
-        #[arg(long)]
-        bos: bool,
-        /// Add EOS token
-        #[arg(long)]
-        eos: bool,
-    },
-    /// Decode token IDs → text
-    Decode {
-        /// Space-separated token IDs
-        ids: Vec<u32>,
-    },
-    /// Generate tokens from a text prompt (random weights — architecture demo)
+    /// Full generation = Prefill + Decode loop
     Generate {
         /// Prompt text
         #[arg(long, default_value = "Hello")]
         prompt: String,
         #[arg(long, default_value = "16")]
         max_tokens: usize,
+    },
+    /// Smoke test (prefill + a few decode steps)
+    Smoke {
+        #[arg(long, default_value = "Hello world")]
+        prompt: String,
+        #[arg(long, default_value = "4")]
+        steps: usize,
+    },
+    /// Tokenizer helper: text → token IDs (not model encode)
+    Tok {
+        text: String,
+        #[arg(long)]
+        bos: bool,
+        #[arg(long)]
+        eos: bool,
+    },
+    /// Tokenizer helper: token IDs → text
+    Detok {
+        ids: Vec<u32>,
     },
 }
 
@@ -73,6 +79,7 @@ fn main() -> anyhow::Result<()> {
             println!("║          SENTINEL — Orbit Model                  ║");
             println!("╠══════════════════════════════════════════════════╣");
             println!("║  Architecture : MoE + Looped Transformer         ║");
+            println!("║  Inference    : Prefill → Decode                 ║");
             println!("║  Kernel       : {} (custom, no 3rd party)   ║", KERNEL_VERSION);
             println!("║  Model name   : {}                          ║", config.name);
             println!("╠══════════════════════════════════════════════════╣");
@@ -89,29 +96,24 @@ fn main() -> anyhow::Result<()> {
             println!("║  Est. params  : ~{:.2}M                          ║", config.estimate_params() as f64 / 1e6);
             println!("╚══════════════════════════════════════════════════╝");
         }
-        Commands::Smoke { seq_len } => {
-            info!("Building Sentinel-Small for smoke test...");
+        Commands::Prefill { prompt } => {
+            info!("Building model...");
             let config = ModelConfig::sentinel_small();
             let model = SentinelModel::new(config);
-            let tokens: Vec<u32> = (0..seq_len as u32).collect();
-            info!("Running forward pass (seq_len={})...", seq_len);
-            let logits = model.forward(&tokens)?;
-            info!("Logits shape: {:?}", logits.shape);
-            info!("Smoke test passed ✓");
-        }
-        Commands::Encode { text, bos, eos } => {
-            let ids = tokenizer.encode_with_special(&text, bos, eos)?;
-            println!("Text   : {:?}", text);
-            println!("Tokens : {:?}", ids);
-            println!("Length : {}", ids.len());
-            if let Ok(decoded) = tokenizer.decode(&ids) {
-                println!("Decode : {:?}", decoded);
+
+            let prompt_ids = tokenizer.encode_with_special(&prompt, true, false)?;
+            info!("Prefill prompt: {:?} → {} tokens", prompt, prompt_ids.len());
+
+            let step = model.prefill(&prompt_ids)?;
+            info!("Prefill done. cache_len={} logits_shape={:?}", step.cache.len, step.logits.shape);
+
+            let next = SentinelModel::sample_greedy(&step.logits);
+            println!("Prompt tokens : {:?}", prompt_ids);
+            println!("Cache length  : {}", step.cache.len);
+            println!("Next token ID : {}", next);
+            if let Ok(t) = tokenizer.decode(&[next]) {
+                println!("Next token    : {:?}", t);
             }
-        }
-        Commands::Decode { ids } => {
-            let text = tokenizer.decode(&ids)?;
-            println!("IDs    : {:?}", ids);
-            println!("Text   : {:?}", text);
         }
         Commands::Generate { prompt, max_tokens } => {
             info!("Building model (random weights)...");
@@ -119,7 +121,7 @@ fn main() -> anyhow::Result<()> {
             let model = SentinelModel::new(config);
 
             let prompt_ids = tokenizer.encode_with_special(&prompt, true, false)?;
-            info!("Prompt: {:?} → {:?}", prompt, prompt_ids);
+            info!("Prefill + Decode | prompt={:?} max_new={}", prompt, max_tokens);
 
             let out_ids = model.generate(&prompt_ids, max_tokens)?;
             let new_ids = &out_ids[prompt_ids.len()..];
@@ -128,6 +130,37 @@ fn main() -> anyhow::Result<()> {
             println!("Prompt tokens : {:?}", prompt_ids);
             println!("Generated IDs : {:?}", new_ids);
             println!("Full decode   : {:?}", decoded);
+        }
+        Commands::Smoke { prompt, steps } => {
+            info!("Smoke test: Prefill → {} Decode steps", steps);
+            let config = ModelConfig::sentinel_small();
+            let model = SentinelModel::new(config);
+
+            let prompt_ids = tokenizer.encode_with_special(&prompt, true, false)?;
+            info!("Prefill...");
+            let mut step = model.prefill(&prompt_ids)?;
+            info!("Prefill OK | cache_len={} logits={:?}", step.cache.len, step.logits.shape);
+
+            let mut tokens = prompt_ids.clone();
+            for i in 0..steps {
+                let next = SentinelModel::sample_greedy(&step.logits);
+                tokens.push(next);
+                step = model.decode(next, &step.cache, &tokens[..tokens.len() - 1])?;
+                info!("Decode step {} → token {}", i + 1, next);
+            }
+            info!("Smoke test passed ✓");
+            println!("Final tokens: {:?}", tokens);
+        }
+        Commands::Tok { text, bos, eos } => {
+            let ids = tokenizer.encode_with_special(&text, bos, eos)?;
+            println!("Text   : {:?}", text);
+            println!("Tokens : {:?}", ids);
+            println!("Length : {}", ids.len());
+        }
+        Commands::Detok { ids } => {
+            let text = tokenizer.decode(&ids)?;
+            println!("IDs    : {:?}", ids);
+            println!("Text   : {:?}", text);
         }
     }
 

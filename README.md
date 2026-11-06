@@ -18,6 +18,7 @@
 | **FFN**                | SwiGLU-style Experts + optional Shared Expert    |
 | **Looping**            | Same set of layers applied `n_loops` times       |
 | **Normalization**      | RMSNorm                                          |
+| **Inference**           | Prefill → Decode (KV cache)                      |
 
 ### Why Looped Transformer?
 Instead of 32 unique layers, we keep e.g. 8 unique layers and loop them 4×.  
@@ -98,23 +99,29 @@ Sentinel ships with a flexible tokenizer layer (`sentinel-tokenizer`):
 | **HuggingFace tokenizers** | `--tokenizer path/to/tokenizer.json` | Full BPE / WordPiece / Unigram |
 | **SimpleTokenizer** | Default (no file) | Character + whitespace, good for demos |
 
-### CLI examples
+### Inference path: Prefill → Decode
+
+There is **no model-level encode**. Flow is:
+
+1. **Prefill** — full prompt in one shot → last logits + KV cache
+2. **Decode** — one new token at a time (autoregressive)
 
 ```bash
-# Encode text
-cargo run -p sentinel-infer -- encode "Hello Sentinel"
+# Prefill only
+cargo run -p sentinel-infer -- prefill --prompt "Hello Sentinel"
 
-# Encode with BOS/EOS
-cargo run -p sentinel-infer -- encode "Hello" --bos --eos
-
-# Decode IDs
-cargo run -p sentinel-infer -- decode 12 45 67 3
-
-# Generate from text prompt (random weights)
+# Full generation (prefill + decode loop)
 cargo run -p sentinel-infer -- generate --prompt "The future of AI" --max-tokens 20
 
-# Use a real HuggingFace tokenizer.json
-cargo run -p sentinel-infer -- --tokenizer ./tokenizer.json encode "Hello world"
+# Smoke: prefill + N decode steps
+cargo run -p sentinel-infer -- smoke --prompt "Hello" --steps 4
+
+# Tokenizer helpers (text ↔ ids only, not model encode)
+cargo run -p sentinel-infer -- tok "Hello Sentinel" --bos
+cargo run -p sentinel-infer -- detok 12 45 67 3
+
+# Real HuggingFace tokenizer.json
+cargo run -p sentinel-infer -- --tokenizer ./tokenizer.json generate --prompt "Hi"
 ```
 
 ## License
