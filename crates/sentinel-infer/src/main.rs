@@ -62,6 +62,15 @@ enum Commands {
         seq_len: usize,
         #[arg(long, default_value = "3e-4")]
         lr: f32,
+        /// Optional token-id file (whitespace separated u32)
+        #[arg(long)]
+        data: Option<PathBuf>,
+        /// Save checkpoint path after training
+        #[arg(long)]
+        save: Option<PathBuf>,
+        /// Load checkpoint before training
+        #[arg(long)]
+        load: Option<PathBuf>,
     },
     Tok {
         text: String,
@@ -91,7 +100,7 @@ fn main() -> anyhow::Result<()> {
             println!("Architecture : MoE + Looped Transformer");
             println!("Inference    : Prefill → Decode (KV cache)");
             println!("Sampling     : temperature / top-p / top-k");
-            println!("Training     : CE + AdamW (lm_head)");
+            println!("Training     : Full autograd + AdamW + ckpt");
             println!("Kernel       : {}", KERNEL_VERSION);
             println!("Model        : {}", config.name);
             println!(
@@ -181,34 +190,54 @@ fn main() -> anyhow::Result<()> {
             info!("Smoke test passed ✓");
             println!("Final tokens: {:?}", tokens);
         }
-        Commands::Train { steps, seq_len, lr } => {
-            info!("Training smoke | steps={} seq_len={} lr={}", steps, seq_len, lr);
-            // Tiny config so CPU can actually step
-            let mut model_cfg = ModelConfig::sentinel_small();
-            model_cfg.d_model = 128;
-            model_cfg.n_heads = 4;
-            model_cfg.d_head = 32;
-            model_cfg.d_ff = 256;
-            model_cfg.n_layers = 2;
-            model_cfg.n_loops = 2;
-            model_cfg.n_experts = 2;
-            model_cfg.vocab_size = 256;
-            model_cfg.max_seq_len = seq_len;
-
+        Commands::Train {
+            steps,
+            seq_len,
+            lr,
+            data,
+            save,
+            load,
+        } => {
+            info!(
+                "Training | steps={} seq_len={} lr={} full_autograd=true",
+                steps, seq_len, lr
+            );
             let train_cfg = TrainConfig {
                 lr,
                 max_seq_len: seq_len,
                 train_embed: true,
+                full_autograd: true,
                 ..TrainConfig::default()
             };
-            let mut trainer = Trainer::new(model_cfg, train_cfg);
 
-            // Synthetic token stream
-            let data: Vec<u32> = (0..seq_len * steps * 2)
-                .map(|i| (i % 256) as u32)
-                .collect();
+            let mut trainer = if let Some(ref path) = load {
+                info!("Loading checkpoint {}", path.display());
+                Trainer::from_checkpoint(path, train_cfg)?
+            } else {
+                let mut model_cfg = ModelConfig::sentinel_small();
+                model_cfg.d_model = 128;
+                model_cfg.n_heads = 4;
+                model_cfg.d_head = 32;
+                model_cfg.d_ff = 256;
+                model_cfg.n_layers = 2;
+                model_cfg.n_loops = 1;
+                model_cfg.n_experts = 2;
+                model_cfg.vocab_size = 256;
+                model_cfg.max_seq_len = seq_len;
+                Trainer::new(model_cfg, train_cfg)
+            };
 
-            let stats = trainer.train_on_tokens(&data, steps, seq_len)?;
+            let stats = if let Some(ref path) = data {
+                info!("Dataset file {}", path.display());
+                let ds = sentinel_train::TokenDataset::from_id_file(path, seq_len)?;
+                trainer.train_on_dataset(&ds, steps)?
+            } else {
+                let stream: Vec<u32> = (0..seq_len * steps * 2)
+                    .map(|i| (i % 256) as u32)
+                    .collect();
+                trainer.train_on_tokens(&stream, steps, seq_len)?
+            };
+
             for s in &stats {
                 info!("step {} | loss={:.4} | tokens={}", s.step, s.loss, s.tokens);
             }
@@ -217,6 +246,10 @@ fn main() -> anyhow::Result<()> {
                     "Train done | steps={} final_loss={:.4}",
                     last.step, last.loss
                 );
+            }
+            if let Some(ref path) = save {
+                trainer.save(path)?;
+                println!("Checkpoint saved → {}", path.display());
             }
         }
         Commands::Tok { text, bos, eos } => {

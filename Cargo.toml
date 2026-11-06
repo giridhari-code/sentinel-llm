@@ -8,6 +8,7 @@ members = [
     "crates/sentinel-train",
     "crates/sentinel-infer",
     "crates/sentinel-tokenizer",
+    "crates/sentinel-autograd",
 ]
 default-members = ["crates/sentinel-infer"]
 
@@ -28,6 +29,7 @@ sentinel-transformer = { path = "crates/sentinel-transformer" }
 sentinel-train = { path = "crates/sentinel-train" }
 sentinel-infer = { path = "crates/sentinel-infer" }
 sentinel-tokenizer = { path = "crates/sentinel-tokenizer" }
+sentinel-autograd = { path = "crates/sentinel-autograd" }
 
 # Minimal external deps (no CUDA/cuDNN/FlashAttention etc.)
 serde = { version = "1.0", features = ["derive"] }

@@ -1,0 +1,11 @@
+[package]
+name = "sentinel-autograd"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Reverse-mode autograd tape for Sentinel (pure Rust)"
+
+[dependencies]
+sentinel-core = { workspace = true }
+log = { workspace = true }

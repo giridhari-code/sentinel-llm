@@ -4,13 +4,16 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "Training loop and optimizers for Sentinel"
+description = "Training loop, autograd integration, checkpoints, datasets for Sentinel"
 
 [dependencies]
 sentinel-core = { workspace = true }
 sentinel-transformer = { workspace = true }
 sentinel-kernel = { workspace = true }
+sentinel-autograd = { workspace = true }
 rand = { workspace = true }
 log = { workspace = true }
 indicatif = { workspace = true }
 clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
