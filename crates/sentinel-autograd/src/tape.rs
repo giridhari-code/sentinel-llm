@@ -1,5 +1,8 @@
-//! Computation tape and variable handles.
+//! Computation tape and variable handles — includes SDPA + Softmax backward.
 
+use crate::ops::{
+    matmul2, sdpa2, sdpa2_backward, softmax_backward, softmax_last, transpose2,
+};
 use sentinel_core::tensor::Tensor;
 use sentinel_core::types::Float;
 use sentinel_core::{Result, SentinelError};
@@ -10,20 +13,26 @@ pub struct Var(pub(crate) usize);
 
 #[derive(Clone, Debug)]
 pub(crate) enum Op {
-    /// Leaf parameter or constant input
     Leaf { is_param: bool },
     Matmul { a: Var, b: Var },
     Add { a: Var, b: Var },
     Mul { a: Var, b: Var },
     Scale { x: Var, factor: Float },
     Silu { x: Var },
-    /// RMSNorm: y = x / rms * weight (weight is Var)
     RmsNorm { x: Var, weight: Var, eps: Float },
-    /// Embedding gather: weight [vocab, d], indices stored separately
     Embed { weight: Var, indices: Vec<u32> },
-    /// Softmax CE loss (scalar). logits [seq,vocab], targets next tokens
     SoftmaxCe { logits: Var, targets: Vec<u32> },
     Reshape { x: Var, shape: Vec<usize> },
+    /// Softmax over last dimension; caches probs in value
+    Softmax { x: Var },
+    /// 2D SDPA: out = softmax(Q K^T * scale) V ; caches probs for backward
+    Sdpa {
+        q: Var,
+        k: Var,
+        v: Var,
+        scale: Float,
+        probs: Tensor,
+    },
 }
 
 struct Node {
@@ -36,7 +45,6 @@ pub struct Tape {
     nodes: Vec<Node>,
 }
 
-/// Map from parameter Var → gradient tensor
 pub type GradMap = HashMap<Var, Tensor>;
 
 impl Tape {
@@ -58,12 +66,10 @@ impl Tape {
         Var(id)
     }
 
-    /// Constant (no grad)
     pub fn constant(&mut self, t: Tensor) -> Var {
         self.push(t, Op::Leaf { is_param: false })
     }
 
-    /// Learnable parameter
     pub fn param(&mut self, t: Tensor) -> Var {
         self.push(t, Op::Leaf { is_param: true })
     }
@@ -80,31 +86,8 @@ impl Tape {
         matches!(self.nodes[v.0].op, Op::Leaf { is_param: true })
     }
 
-    // ----- ops -----
-
     pub fn matmul(&mut self, a: Var, b: Var) -> Result<Var> {
-        let va = &self.nodes[a.0].value;
-        let vb = &self.nodes[b.0].value;
-        if va.rank() != 2 || vb.rank() != 2 || va.shape[1] != vb.shape[0] {
-            return Err(SentinelError::ShapeMismatch {
-                expected: va.shape.clone(),
-                got: vb.shape.clone(),
-            });
-        }
-        let m = va.shape[0];
-        let k = va.shape[1];
-        let n = vb.shape[1];
-        let mut data = vec![0.0; m * n];
-        for i in 0..m {
-            for j in 0..n {
-                let mut s = 0.0f32;
-                for p in 0..k {
-                    s += va.data[i * k + p] * vb.data[p * n + j];
-                }
-                data[i * n + j] = s;
-            }
-        }
-        let out = Tensor::from_vec(data, &[m, n])?;
+        let out = matmul2(&self.nodes[a.0].value, &self.nodes[b.0].value)?;
         Ok(self.push(out, Op::Matmul { a, b }))
     }
 
@@ -197,7 +180,6 @@ impl Tape {
         Ok(self.push(t, Op::Reshape { x, shape: shape.to_vec() }))
     }
 
-    /// Scalar CE loss Var (value shape [1]).
     pub fn softmax_ce(&mut self, logits: Var, targets: &[u32]) -> Result<Var> {
         let (loss, _d) = crate::ops::softmax_cross_entropy(&self.nodes[logits.0].value, targets)?;
         let out = Tensor::from_vec(vec![loss], &[1])?;
@@ -208,6 +190,23 @@ impl Tape {
                 targets: targets.to_vec(),
             },
         ))
+    }
+
+    /// Softmax over last dimension.
+    pub fn softmax(&mut self, x: Var) -> Result<Var> {
+        let probs = softmax_last(&self.nodes[x.0].value)?;
+        Ok(self.push(probs, Op::Softmax { x }))
+    }
+
+    /// True scaled-dot-product attention (2D Q,K,V each [seq, d]).
+    pub fn sdpa(&mut self, q: Var, k: Var, v: Var, scale: Float) -> Result<Var> {
+        let (out, probs) = sdpa2(
+            &self.nodes[q.0].value,
+            &self.nodes[k.0].value,
+            &self.nodes[v.0].value,
+            scale,
+        )?;
+        Ok(self.push(out, Op::Sdpa { q, k, v, scale, probs }))
     }
 
     fn acc_grad(&mut self, v: Var, g: &Tensor) -> Result<()> {
@@ -225,11 +224,8 @@ impl Tape {
         Ok(())
     }
 
-    /// Reverse-mode autodiff from a scalar loss variable.
     pub fn backward(&mut self, loss: Var) -> Result<()> {
-        // seed
-        let ones = Tensor::ones(&[1]);
-        self.nodes[loss.0].grad = Some(ones);
+        self.nodes[loss.0].grad = Some(Tensor::ones(&[1]));
 
         for i in (0..self.nodes.len()).rev() {
             let grad = match &self.nodes[i].grad {
@@ -240,12 +236,10 @@ impl Tape {
             match op {
                 Op::Leaf { .. } => {}
                 Op::Matmul { a, b } => {
-                    // dA = G @ B^T, dB = A^T @ G
                     let va = &self.nodes[a.0].value;
                     let vb = &self.nodes[b.0].value;
                     let (m, k) = (va.shape[0], va.shape[1]);
                     let n = vb.shape[1];
-                    // G: [m,n]
                     let mut da = vec![0.0; m * k];
                     for i in 0..m {
                         for p in 0..k {
@@ -297,7 +291,6 @@ impl Tape {
                     self.acc_grad(x, &g)?;
                 }
                 Op::Silu { x } => {
-                    // d/dx [x*sigmoid(x)] = sig + x*sig*(1-sig)
                     let v = &self.nodes[x.0].value;
                     let mut gx = vec![0.0; v.numel()];
                     for i in 0..v.numel() {
@@ -322,9 +315,7 @@ impl Tape {
                         for &a in row {
                             sq += a * a;
                         }
-                        let rms = (sq / last as f32 + eps).sqrt();
-                        let inv = 1.0 / rms;
-                        // Simplified grad w.r.t x (diagonal approx + weight)
+                        let inv = 1.0 / (sq / last as f32 + eps).sqrt();
                         for j in 0..last {
                             gw[j] += grow[j] * row[j] * inv;
                             gx[start + j] += grow[j] * inv * wv.data[j];
@@ -349,7 +340,6 @@ impl Tape {
                 Op::SoftmaxCe { logits, targets } => {
                     let (_loss, d_logits) =
                         crate::ops::softmax_cross_entropy(&self.nodes[logits.0].value, &targets)?;
-                    // loss scalar grad is 1
                     self.acc_grad(logits, &d_logits)?;
                 }
                 Op::Reshape { x, shape: _ } => {
@@ -357,12 +347,30 @@ impl Tape {
                     g.shape = self.nodes[x.0].value.shape.clone();
                     self.acc_grad(x, &g)?;
                 }
+                Op::Softmax { x } => {
+                    // value of this node IS the probs
+                    let probs = &self.nodes[i].value;
+                    let dx = softmax_backward(probs, &grad)?;
+                    self.acc_grad(x, &dx)?;
+                }
+                Op::Sdpa { q, k, v, scale, probs } => {
+                    let (dq, dk, dv) = sdpa2_backward(
+                        &grad,
+                        &probs,
+                        &self.nodes[q.0].value,
+                        &self.nodes[k.0].value,
+                        &self.nodes[v.0].value,
+                        scale,
+                    )?;
+                    self.acc_grad(q, &dq)?;
+                    self.acc_grad(k, &dk)?;
+                    self.acc_grad(v, &dv)?;
+                }
             }
         }
         Ok(())
     }
 
-    /// Collect gradients for all parameter leaves.
     pub fn param_grads(&self) -> GradMap {
         let mut map = GradMap::new();
         for (i, node) in self.nodes.iter().enumerate() {
