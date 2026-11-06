@@ -1,19 +1,20 @@
 //! Sentinel Inference CLI
 //!
-//! Inference path: Prefill → Decode (no separate "encode" stage for the model).
+//! Inference: Prefill → Decode (KV cache) + temperature / top-p sampling
+//! Training:  causal LM steps via sentinel-train
 
 use clap::{Parser, Subcommand};
 use log::info;
 use sentinel_core::config::ModelConfig;
-use sentinel_transformer::SentinelModel;
 use sentinel_kernel::KERNEL_VERSION;
 use sentinel_tokenizer::{load_tokenizer, Tokenizer};
+use sentinel_train::{TrainConfig, Trainer};
+use sentinel_transformer::{SamplingConfig, SentinelModel};
 use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "sentinel", about = "Sentinel — MoE Looped Transformer LLM (Tesla Kernel)")]
 struct Cli {
-    /// Optional path to HuggingFace tokenizer.json
     #[arg(long, global = true)]
     tokenizer: Option<PathBuf>,
 
@@ -23,33 +24,45 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Print model info and architecture
     Info {
         #[arg(long, default_value = "small")]
         size: String,
     },
-    /// Prefill phase — process full prompt, return last-position logits shape
     Prefill {
-        /// Prompt text
         #[arg(long, default_value = "Hello Sentinel")]
         prompt: String,
     },
-    /// Full generation = Prefill + Decode loop
+    /// Prefill + Decode with sampling
     Generate {
-        /// Prompt text
         #[arg(long, default_value = "Hello")]
         prompt: String,
         #[arg(long, default_value = "16")]
         max_tokens: usize,
+        /// Softmax temperature (0 = greedy)
+        #[arg(long, default_value = "0.8")]
+        temperature: f32,
+        /// Nucleus top-p
+        #[arg(long, default_value = "0.9")]
+        top_p: f32,
+        /// Top-k (0 = off)
+        #[arg(long, default_value = "50")]
+        top_k: usize,
     },
-    /// Smoke test (prefill + a few decode steps)
     Smoke {
         #[arg(long, default_value = "Hello world")]
         prompt: String,
         #[arg(long, default_value = "4")]
         steps: usize,
     },
-    /// Tokenizer helper: text → token IDs (not model encode)
+    /// Run a few causal-LM training steps on synthetic tokens
+    Train {
+        #[arg(long, default_value = "20")]
+        steps: usize,
+        #[arg(long, default_value = "64")]
+        seq_len: usize,
+        #[arg(long, default_value = "3e-4")]
+        lr: f32,
+    },
     Tok {
         text: String,
         #[arg(long)]
@@ -57,7 +70,6 @@ enum Commands {
         #[arg(long)]
         eos: bool,
     },
-    /// Tokenizer helper: token IDs → text
     Detok {
         ids: Vec<u32>,
     },
@@ -75,55 +87,66 @@ fn main() -> anyhow::Result<()> {
                 "medium" => ModelConfig::sentinel_medium(),
                 _ => ModelConfig::sentinel_small(),
             };
-            println!("╔══════════════════════════════════════════════════╗");
-            println!("║          SENTINEL — Orbit Model                  ║");
-            println!("╠══════════════════════════════════════════════════╣");
-            println!("║  Architecture : MoE + Looped Transformer         ║");
-            println!("║  Inference    : Prefill → Decode                 ║");
-            println!("║  Kernel       : {} (custom, no 3rd party)   ║", KERNEL_VERSION);
-            println!("║  Model name   : {}                          ║", config.name);
-            println!("╠══════════════════════════════════════════════════╣");
-            println!("║  d_model      : {:>6}                           ║", config.d_model);
-            println!("║  n_heads      : {:>6}                           ║", config.n_heads);
-            println!("║  n_layers     : {:>6}  (unique)                 ║", config.n_layers);
-            println!("║  n_loops      : {:>6}  (effective depth)        ║", config.n_loops);
-            println!("║  n_experts    : {:>6}  (top_k={})                ║", config.n_experts, config.top_k);
-            println!("║  d_ff         : {:>6}                           ║", config.d_ff);
-            println!("║  max_seq_len  : {:>6}                           ║", config.max_seq_len);
-            println!("║  vocab_size   : {:>6}  (model config)           ║", config.vocab_size);
-            println!("║  tok vocab    : {:>6}  (tokenizer)              ║", tokenizer.vocab_size());
-            println!("╠══════════════════════════════════════════════════╣");
-            println!("║  Est. params  : ~{:.2}M                          ║", config.estimate_params() as f64 / 1e6);
-            println!("╚══════════════════════════════════════════════════╝");
+            println!("SENTINEL — Orbit Model");
+            println!("Architecture : MoE + Looped Transformer");
+            println!("Inference    : Prefill → Decode (KV cache)");
+            println!("Sampling     : temperature / top-p / top-k");
+            println!("Training     : CE + AdamW (lm_head)");
+            println!("Kernel       : {}", KERNEL_VERSION);
+            println!("Model        : {}", config.name);
+            println!(
+                "d_model={} n_layers={} n_loops={} n_experts={} top_k={}",
+                config.d_model, config.n_layers, config.n_loops, config.n_experts, config.top_k
+            );
+            println!(
+                "vocab_size={} tok_vocab={}",
+                config.vocab_size,
+                tokenizer.vocab_size()
+            );
+            println!(
+                "Est. params  : ~{:.2}M",
+                config.estimate_params() as f64 / 1e6
+            );
         }
         Commands::Prefill { prompt } => {
             info!("Building model...");
-            let config = ModelConfig::sentinel_small();
-            let model = SentinelModel::new(config);
-
+            let model = SentinelModel::new(ModelConfig::sentinel_small());
             let prompt_ids = tokenizer.encode_with_special(&prompt, true, false)?;
             info!("Prefill prompt: {:?} → {} tokens", prompt, prompt_ids.len());
 
             let step = model.prefill(&prompt_ids)?;
-            info!("Prefill done. cache_len={} logits_shape={:?}", step.cache.len, step.logits.shape);
+            info!(
+                "Prefill done. cache_len={} logits_shape={:?}",
+                step.cache.len, step.logits.shape
+            );
 
             let next = SentinelModel::sample_greedy(&step.logits);
             println!("Prompt tokens : {:?}", prompt_ids);
             println!("Cache length  : {}", step.cache.len);
             println!("Next token ID : {}", next);
-            if let Ok(t) = tokenizer.decode(&[next]) {
-                println!("Next token    : {:?}", t);
-            }
         }
-        Commands::Generate { prompt, max_tokens } => {
-            info!("Building model (random weights)...");
-            let config = ModelConfig::sentinel_small();
-            let model = SentinelModel::new(config);
-
+        Commands::Generate {
+            prompt,
+            max_tokens,
+            temperature,
+            top_p,
+            top_k,
+        } => {
+            info!("Building model...");
+            let model = SentinelModel::new(ModelConfig::sentinel_small());
             let prompt_ids = tokenizer.encode_with_special(&prompt, true, false)?;
-            info!("Prefill + Decode | prompt={:?} max_new={}", prompt, max_tokens);
+            let sampling = SamplingConfig {
+                temperature,
+                top_p,
+                top_k,
+                ban: Vec::new(),
+            };
+            info!(
+                "Generate | temp={} top_p={} top_k={} max_new={}",
+                temperature, top_p, top_k, max_tokens
+            );
 
-            let out_ids = model.generate(&prompt_ids, max_tokens)?;
+            let out_ids = model.generate(&prompt_ids, max_tokens, &sampling)?;
             let new_ids = &out_ids[prompt_ids.len()..];
             let decoded = tokenizer.decode(&out_ids)?;
 
@@ -133,23 +156,68 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Smoke { prompt, steps } => {
             info!("Smoke test: Prefill → {} Decode steps", steps);
-            let config = ModelConfig::sentinel_small();
-            let model = SentinelModel::new(config);
-
+            let model = SentinelModel::new(ModelConfig::sentinel_small());
             let prompt_ids = tokenizer.encode_with_special(&prompt, true, false)?;
-            info!("Prefill...");
-            let mut step = model.prefill(&prompt_ids)?;
-            info!("Prefill OK | cache_len={} logits={:?}", step.cache.len, step.logits.shape);
 
+            let mut step = model.prefill(&prompt_ids)?;
+            info!(
+                "Prefill OK | cache_len={} logits={:?}",
+                step.cache.len, step.logits.shape
+            );
+
+            let sampling = SamplingConfig::creative();
             let mut tokens = prompt_ids.clone();
             for i in 0..steps {
-                let next = SentinelModel::sample_greedy(&step.logits);
+                let next = sentinel_transformer::sample_token(&step.logits, &sampling);
                 tokens.push(next);
                 step = model.decode(next, &step.cache)?;
-                info!("Decode step {} → token {}", i + 1, next);
+                info!(
+                    "Decode step {} → token {} | cache_len={}",
+                    i + 1,
+                    next,
+                    step.cache.len
+                );
             }
             info!("Smoke test passed ✓");
             println!("Final tokens: {:?}", tokens);
+        }
+        Commands::Train { steps, seq_len, lr } => {
+            info!("Training smoke | steps={} seq_len={} lr={}", steps, seq_len, lr);
+            // Tiny config so CPU can actually step
+            let mut model_cfg = ModelConfig::sentinel_small();
+            model_cfg.d_model = 128;
+            model_cfg.n_heads = 4;
+            model_cfg.d_head = 32;
+            model_cfg.d_ff = 256;
+            model_cfg.n_layers = 2;
+            model_cfg.n_loops = 2;
+            model_cfg.n_experts = 2;
+            model_cfg.vocab_size = 256;
+            model_cfg.max_seq_len = seq_len;
+
+            let train_cfg = TrainConfig {
+                lr,
+                max_seq_len: seq_len,
+                train_embed: true,
+                ..TrainConfig::default()
+            };
+            let mut trainer = Trainer::new(model_cfg, train_cfg);
+
+            // Synthetic token stream
+            let data: Vec<u32> = (0..seq_len * steps * 2)
+                .map(|i| (i % 256) as u32)
+                .collect();
+
+            let stats = trainer.train_on_tokens(&data, steps, seq_len)?;
+            for s in &stats {
+                info!("step {} | loss={:.4} | tokens={}", s.step, s.loss, s.tokens);
+            }
+            if let Some(last) = stats.last() {
+                println!(
+                    "Train done | steps={} final_loss={:.4}",
+                    last.step, last.loss
+                );
+            }
         }
         Commands::Tok { text, bos, eos } => {
             let ids = tokenizer.encode_with_special(&text, bos, eos)?;

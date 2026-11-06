@@ -1,25 +1,17 @@
-//! Training infrastructure for Sentinel (skeleton).
+//! Training loop for Sentinel.
+//!
+//! Tesla-1 scope:
+//! - Cross-entropy loss (causal LM)
+//! - Analytic gradient through lm_head (softmax CE)
+//! - AdamW optimizer on registered parameter tensors
+//! - Trainable: lm_head (+ optional embed)
+//!
+//! Full transformer backprop lands in a later Tesla version.
 
-use sentinel_core::config::ModelConfig;
-use sentinel_transformer::SentinelModel;
-use log::info;
+pub mod loss;
+pub mod optim;
+pub mod trainer;
 
-pub struct Trainer {
-    pub model: SentinelModel,
-    pub lr: f32,
-}
-
-impl Trainer {
-    pub fn new(config: ModelConfig, lr: f32) -> Self {
-        Self {
-            model: SentinelModel::new(config),
-            lr,
-        }
-    }
-
-    /// Placeholder training step — full optimizer (AdamW etc.) will come later.
-    pub fn train_step(&mut self, _tokens: &[u32], _targets: &[u32]) {
-        info!("train_step called (optimizer not yet implemented in Tesla-1)");
-        // TODO: forward → loss → backward → update
-    }
-}
+pub use loss::cross_entropy_loss;
+pub use optim::{AdamW, AdamWConfig};
+pub use trainer::{TrainConfig, Trainer, TrainStepStats};

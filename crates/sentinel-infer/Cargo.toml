@@ -15,6 +15,7 @@ sentinel-core = { workspace = true }
 sentinel-transformer = { workspace = true }
 sentinel-kernel = { workspace = true }
 sentinel-tokenizer = { workspace = true }
+sentinel-train = { workspace = true }
 clap = { workspace = true }
 log = { workspace = true }
 env_logger = { workspace = true }

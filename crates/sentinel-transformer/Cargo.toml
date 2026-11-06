@@ -11,3 +11,4 @@ sentinel-core = { workspace = true }
 sentinel-kernel = { workspace = true }
 sentinel-moe = { workspace = true }
 log = { workspace = true }
+rand = { workspace = true }

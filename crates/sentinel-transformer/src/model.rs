@@ -8,6 +8,7 @@
 use crate::block::TransformerBlock;
 use crate::embedding::Embedding;
 use crate::kv_cache::{KVCache, LayerKV, StepOutput};
+use crate::sample::{sample_token, SamplingConfig};
 use sentinel_core::tensor::Tensor;
 use sentinel_core::types::TokenId;
 use sentinel_core::{Result, ModelConfig, SentinelError};
@@ -167,17 +168,16 @@ impl SentinelModel {
     }
 
     pub fn sample_greedy(logits: &Tensor) -> TokenId {
-        logits
-            .data
-            .iter()
-            .enumerate()
-            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-            .map(|(i, _)| i as TokenId)
-            .unwrap_or(0)
+        sample_token(logits, &SamplingConfig::greedy())
     }
 
-    /// Prefill → repeated Decode (true incremental generation).
-    pub fn generate(&self, prompt: &[TokenId], max_new_tokens: usize) -> Result<Vec<TokenId>> {
+    /// Prefill → repeated Decode with configurable sampling.
+    pub fn generate(
+        &self,
+        prompt: &[TokenId],
+        max_new_tokens: usize,
+        sampling: &SamplingConfig,
+    ) -> Result<Vec<TokenId>> {
         if prompt.is_empty() {
             return Err(SentinelError::Other("generate: empty prompt".into()));
         }
@@ -186,11 +186,23 @@ impl SentinelModel {
         let mut tokens = prompt.to_vec();
 
         for _ in 0..max_new_tokens {
-            let next = Self::sample_greedy(&step.logits);
+            let next = sample_token(&step.logits, sampling);
             tokens.push(next);
             step = self.decode(next, &step.cache)?;
         }
 
         Ok(tokens)
+    }
+
+    /// Full-sequence logits [seq, vocab] — used by training.
+    pub fn forward_logits(&self, tokens: &[TokenId]) -> Result<Tensor> {
+        let mut x = self.embed.forward(tokens)?;
+        for _ in 0..self.config.n_loops {
+            for layer in &self.layers {
+                x = layer.forward(&x)?;
+            }
+        }
+        let x = rms_norm(&x, &self.final_norm_weight, self.config.norm_eps)?;
+        matmul(&x, &self.lm_head)
     }
 }

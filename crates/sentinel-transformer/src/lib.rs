@@ -7,7 +7,9 @@ pub mod block;
 pub mod model;
 pub mod embedding;
 pub mod kv_cache;
+pub mod sample;
 
 pub use model::SentinelModel;
 pub use block::TransformerBlock;
 pub use kv_cache::{KVCache, StepOutput};
+pub use sample::{sample_token, SamplingConfig};
