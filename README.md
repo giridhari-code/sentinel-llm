@@ -86,6 +86,37 @@ cargo run -p sentinel-infer -- generate --max-tokens 16
 
 ---
 
+
+---
+
+## Tokenizer
+
+Sentinel ships with a flexible tokenizer layer (`sentinel-tokenizer`):
+
+| Backend | When used | Notes |
+|---------|-----------|-------|
+| **HuggingFace tokenizers** | `--tokenizer path/to/tokenizer.json` | Full BPE / WordPiece / Unigram |
+| **SimpleTokenizer** | Default (no file) | Character + whitespace, good for demos |
+
+### CLI examples
+
+```bash
+# Encode text
+cargo run -p sentinel-infer -- encode "Hello Sentinel"
+
+# Encode with BOS/EOS
+cargo run -p sentinel-infer -- encode "Hello" --bos --eos
+
+# Decode IDs
+cargo run -p sentinel-infer -- decode 12 45 67 3
+
+# Generate from text prompt (random weights)
+cargo run -p sentinel-infer -- generate --prompt "The future of AI" --max-tokens 20
+
+# Use a real HuggingFace tokenizer.json
+cargo run -p sentinel-infer -- --tokenizer ./tokenizer.json encode "Hello world"
+```
+
 ## License
 
 MIT OR Apache-2.0

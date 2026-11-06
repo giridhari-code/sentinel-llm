@@ -5,10 +5,16 @@ use log::info;
 use sentinel_core::config::ModelConfig;
 use sentinel_transformer::SentinelModel;
 use sentinel_kernel::KERNEL_VERSION;
+use sentinel_tokenizer::{load_tokenizer, Tokenizer};
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "sentinel", about = "Sentinel — MoE Looped Transformer LLM (Tesla Kernel)")]
 struct Cli {
+    /// Optional path to HuggingFace tokenizer.json
+    #[arg(long, global = true)]
+    tokenizer: Option<PathBuf>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -25,9 +31,28 @@ enum Commands {
         #[arg(long, default_value = "16")]
         seq_len: usize,
     },
-    /// Generate tokens (random init — just for architecture demo)
+    /// Encode text → token IDs
+    Encode {
+        /// Text to encode
+        text: String,
+        /// Add BOS token
+        #[arg(long)]
+        bos: bool,
+        /// Add EOS token
+        #[arg(long)]
+        eos: bool,
+    },
+    /// Decode token IDs → text
+    Decode {
+        /// Space-separated token IDs
+        ids: Vec<u32>,
+    },
+    /// Generate tokens from a text prompt (random weights — architecture demo)
     Generate {
-        #[arg(long, default_value = "8")]
+        /// Prompt text
+        #[arg(long, default_value = "Hello")]
+        prompt: String,
+        #[arg(long, default_value = "16")]
         max_tokens: usize,
     },
 }
@@ -36,6 +61,7 @@ fn main() -> anyhow::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let cli = Cli::parse();
+    let tokenizer = load_tokenizer(cli.tokenizer.as_deref())?;
 
     match cli.command {
         Commands::Info { size } => {
@@ -57,7 +83,8 @@ fn main() -> anyhow::Result<()> {
             println!("║  n_experts    : {:>6}  (top_k={})                ║", config.n_experts, config.top_k);
             println!("║  d_ff         : {:>6}                           ║", config.d_ff);
             println!("║  max_seq_len  : {:>6}                           ║", config.max_seq_len);
-            println!("║  vocab_size   : {:>6}                           ║", config.vocab_size);
+            println!("║  vocab_size   : {:>6}  (model config)           ║", config.vocab_size);
+            println!("║  tok vocab    : {:>6}  (tokenizer)              ║", tokenizer.vocab_size());
             println!("╠══════════════════════════════════════════════════╣");
             println!("║  Est. params  : ~{:.2}M                          ║", config.estimate_params() as f64 / 1e6);
             println!("╚══════════════════════════════════════════════════╝");
@@ -72,14 +99,35 @@ fn main() -> anyhow::Result<()> {
             info!("Logits shape: {:?}", logits.shape);
             info!("Smoke test passed ✓");
         }
-        Commands::Generate { max_tokens } => {
+        Commands::Encode { text, bos, eos } => {
+            let ids = tokenizer.encode_with_special(&text, bos, eos)?;
+            println!("Text   : {:?}", text);
+            println!("Tokens : {:?}", ids);
+            println!("Length : {}", ids.len());
+            if let Ok(decoded) = tokenizer.decode(&ids) {
+                println!("Decode : {:?}", decoded);
+            }
+        }
+        Commands::Decode { ids } => {
+            let text = tokenizer.decode(&ids)?;
+            println!("IDs    : {:?}", ids);
+            println!("Text   : {:?}", text);
+        }
+        Commands::Generate { prompt, max_tokens } => {
             info!("Building model (random weights)...");
             let config = ModelConfig::sentinel_small();
             let model = SentinelModel::new(config);
-            let prompt = vec![1u32, 2, 3, 4];
-            info!("Generating {} tokens from prompt {:?}...", max_tokens, prompt);
-            let out = model.generate(&prompt, max_tokens)?;
-            println!("Generated token IDs: {:?}", out);
+
+            let prompt_ids = tokenizer.encode_with_special(&prompt, true, false)?;
+            info!("Prompt: {:?} → {:?}", prompt, prompt_ids);
+
+            let out_ids = model.generate(&prompt_ids, max_tokens)?;
+            let new_ids = &out_ids[prompt_ids.len()..];
+            let decoded = tokenizer.decode(&out_ids)?;
+
+            println!("Prompt tokens : {:?}", prompt_ids);
+            println!("Generated IDs : {:?}", new_ids);
+            println!("Full decode   : {:?}", decoded);
         }
     }
 
