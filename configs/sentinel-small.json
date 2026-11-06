@@ -1,0 +1,19 @@
+{
+  "name": "Sentinel-1B",
+  "vocab_size": 32000,
+  "d_model": 1024,
+  "n_heads": 16,
+  "d_head": 64,
+  "d_ff": 4096,
+  "n_layers": 8,
+  "n_loops": 4,
+  "n_experts": 8,
+  "top_k": 2,
+  "capacity_factor": 1.25,
+  "use_shared_expert": true,
+  "max_seq_len": 4096,
+  "rope_theta": 10000.0,
+  "norm_eps": 1e-6,
+  "dropout": 0.0,
+  "kernel_version": "Tesla-1"
+}

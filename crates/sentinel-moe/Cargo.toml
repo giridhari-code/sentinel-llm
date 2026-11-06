@@ -1,0 +1,13 @@
+[package]
+name = "sentinel-moe"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Mixture-of-Experts layers for Sentinel"
+
+[dependencies]
+sentinel-core = { workspace = true }
+sentinel-kernel = { workspace = true }
+rand = { workspace = true }
+log = { workspace = true }

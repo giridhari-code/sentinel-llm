@@ -1,0 +1,13 @@
+[package]
+name = "sentinel-transformer"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Looped Transformer architecture for Sentinel"
+
+[dependencies]
+sentinel-core = { workspace = true }
+sentinel-kernel = { workspace = true }
+sentinel-moe = { workspace = true }
+log = { workspace = true }

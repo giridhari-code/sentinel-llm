@@ -1,0 +1,53 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/sentinel-core",
+    "crates/sentinel-kernel",
+    "crates/sentinel-moe",
+    "crates/sentinel-transformer",
+    "crates/sentinel-train",
+    "crates/sentinel-infer",
+]
+default-members = ["crates/sentinel-infer"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Sentinel Team"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/sentinel-ai/sentinel"
+description = "Sentinel — MoE Looped Transformer LLM with custom Tesla Kernel (no third-party kernels)"
+
+[workspace.dependencies]
+# Internal crates
+sentinel-core = { path = "crates/sentinel-core" }
+sentinel-kernel = { path = "crates/sentinel-kernel" }
+sentinel-moe = { path = "crates/sentinel-moe" }
+sentinel-transformer = { path = "crates/sentinel-transformer" }
+sentinel-train = { path = "crates/sentinel-train" }
+sentinel-infer = { path = "crates/sentinel-infer" }
+
+# Minimal external deps (no CUDA/cuDNN/FlashAttention etc.)
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+anyhow = "1.0"
+rand = "0.8"
+rand_distr = "0.4"
+rayon = "1.10"
+num-traits = "0.2"
+bytemuck = { version = "1.16", features = ["derive"] }
+log = "0.4"
+env_logger = "0.11"
+clap = { version = "4.5", features = ["derive"] }
+indicatif = "0.17"
+tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = 3
+panic = "abort"
+
+[profile.dev]
+opt-level = 1

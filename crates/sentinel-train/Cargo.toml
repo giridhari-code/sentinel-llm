@@ -1,0 +1,16 @@
+[package]
+name = "sentinel-train"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Training loop and optimizers for Sentinel"
+
+[dependencies]
+sentinel-core = { workspace = true }
+sentinel-transformer = { workspace = true }
+sentinel-kernel = { workspace = true }
+rand = { workspace = true }
+log = { workspace = true }
+indicatif = { workspace = true }
+clap = { workspace = true }

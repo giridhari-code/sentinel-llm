@@ -1,0 +1,21 @@
+[package]
+name = "sentinel-infer"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Inference engine and CLI for Sentinel"
+
+[[bin]]
+name = "sentinel"
+path = "src/main.rs"
+
+[dependencies]
+sentinel-core = { workspace = true }
+sentinel-transformer = { workspace = true }
+sentinel-kernel = { workspace = true }
+clap = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+anyhow = { workspace = true }
+serde_json = { workspace = true }
