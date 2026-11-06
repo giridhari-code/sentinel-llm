@@ -18,7 +18,7 @@ pub use attention::scaled_dot_product_attention;
 pub use norm::rms_norm;
 pub use activation::silu;
 pub use softmax::softmax;
-pub use rope::apply_rope;
+pub use rope::{apply_rope, apply_rope_with_offset};
 
 /// Kernel version string
 pub const KERNEL_VERSION: &str = "Tesla-1";

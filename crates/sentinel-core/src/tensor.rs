@@ -143,3 +143,59 @@ impl fmt::Debug for Tensor {
         write!(f, "Tensor(shape={:?}, numel={})", self.shape, self.numel())
     }
 }
+
+impl Tensor {
+    /// Concatenate two tensors along `dim`. Both must have same rank and matching sizes on other dims.
+    pub fn concat(a: &Tensor, b: &Tensor, dim: usize) -> Result<Tensor> {
+        if a.rank() != b.rank() {
+            return Err(SentinelError::Kernel("concat: rank mismatch".into()));
+        }
+        if dim >= a.rank() {
+            return Err(SentinelError::InvalidDim(format!("dim {} out of range", dim)));
+        }
+        for (i, (sa, sb)) in a.shape.iter().zip(b.shape.iter()).enumerate() {
+            if i != dim && sa != sb {
+                return Err(SentinelError::ShapeMismatch {
+                    expected: a.shape.clone(),
+                    got: b.shape.clone(),
+                });
+            }
+        }
+
+        let mut out_shape = a.shape.clone();
+        out_shape[dim] = a.shape[dim] + b.shape[dim];
+
+        // Generic concat via outer/inner product
+        let outer: usize = a.shape[..dim].iter().product();
+        let a_mid = a.shape[dim];
+        let b_mid = b.shape[dim];
+        let inner: usize = a.shape[dim + 1..].iter().product();
+
+        let mut data = vec![0.0; outer * (a_mid + b_mid) * inner];
+        for o in 0..outer {
+            let a_src = o * a_mid * inner;
+            let b_src = o * b_mid * inner;
+            let dst = o * (a_mid + b_mid) * inner;
+            data[dst..dst + a_mid * inner]
+                .copy_from_slice(&a.data[a_src..a_src + a_mid * inner]);
+            data[dst + a_mid * inner..dst + (a_mid + b_mid) * inner]
+                .copy_from_slice(&b.data[b_src..b_src + b_mid * inner]);
+        }
+        Tensor::from_vec(data, &out_shape)
+    }
+
+    /// Slice along dim 0: rows [start, end)
+    pub fn slice_seq(&self, start: usize, end: usize) -> Result<Tensor> {
+        if self.rank() == 0 || end > self.shape[0] || start >= end {
+            return Err(SentinelError::InvalidDim(format!(
+                "slice_seq [{}, {}) on shape {:?}",
+                start, end, self.shape
+            )));
+        }
+        let inner: usize = self.shape[1..].iter().product();
+        let mut out_shape = self.shape.clone();
+        out_shape[0] = end - start;
+        let data = self.data[start * inner..end * inner].to_vec();
+        Tensor::from_vec(data, &out_shape)
+    }
+}

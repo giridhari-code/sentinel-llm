@@ -145,7 +145,7 @@ fn main() -> anyhow::Result<()> {
             for i in 0..steps {
                 let next = SentinelModel::sample_greedy(&step.logits);
                 tokens.push(next);
-                step = model.decode(next, &step.cache, &tokens[..tokens.len() - 1])?;
+                step = model.decode(next, &step.cache)?;
                 info!("Decode step {} → token {}", i + 1, next);
             }
             info!("Smoke test passed ✓");
