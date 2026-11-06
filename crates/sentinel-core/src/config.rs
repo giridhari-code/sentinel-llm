@@ -40,6 +40,9 @@ pub struct ModelConfig {
     /// Capacity factor for expert routing
     pub capacity_factor: f32,
 
+    /// Coefficient for MoE load-balancing auxiliary loss
+    pub aux_loss_coef: f32,
+
     /// Whether to use shared expert(s)
     pub use_shared_expert: bool,
 
@@ -77,6 +80,7 @@ impl Default for ModelConfig {
             n_experts: 8,
             top_k: 2,
             capacity_factor: 1.25,
+            aux_loss_coef: 0.01,
             use_shared_expert: true,
             max_seq_len: 4096,
             rope_theta: 10_000.0,

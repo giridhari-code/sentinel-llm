@@ -214,3 +214,143 @@ pub fn topk_route(
     let hard_t = Tensor::from_vec(hard, &[rows, k])?;
     Ok((indices, hard_t, soft))
 }
+
+/// Split [seq, d_model] into n_heads contiguous chunks of d_head each.
+/// Returns vec of [seq, d_head] tensors.
+pub fn split_heads(x: &Tensor, n_heads: usize, d_head: usize) -> Result<Vec<Tensor>> {
+    let seq = x.shape[0];
+    let d = x.shape[1];
+    if n_heads * d_head != d {
+        return Err(SentinelError::ShapeMismatch {
+            expected: vec![seq, n_heads * d_head],
+            got: x.shape.clone(),
+        });
+    }
+    let mut heads = Vec::with_capacity(n_heads);
+    for h in 0..n_heads {
+        let mut data = vec![0.0; seq * d_head];
+        for t in 0..seq {
+            let src = t * d + h * d_head;
+            let dst = t * d_head;
+            data[dst..dst + d_head].copy_from_slice(&x.data[src..src + d_head]);
+        }
+        heads.push(Tensor::from_vec(data, &[seq, d_head])?);
+    }
+    Ok(heads)
+}
+
+/// Concatenate heads [seq, d_head] × n_heads → [seq, n_heads * d_head]
+pub fn concat_heads(heads: &[Tensor]) -> Result<Tensor> {
+    if heads.is_empty() {
+        return Err(SentinelError::Other("concat_heads: empty".into()));
+    }
+    let seq = heads[0].shape[0];
+    let d_head = heads[0].shape[1];
+    let n_heads = heads.len();
+    let d = n_heads * d_head;
+    let mut data = vec![0.0; seq * d];
+    for (h, head) in heads.iter().enumerate() {
+        for t in 0..seq {
+            let src = t * d_head;
+            let dst = t * d + h * d_head;
+            data[dst..dst + d_head].copy_from_slice(&head.data[src..src + d_head]);
+        }
+    }
+    Tensor::from_vec(data, &[seq, d])
+}
+
+/// Multi-head SDPA: Q,K,V are [seq, d_model], split into heads, SDPA each, concat.
+/// Returns (out [seq,d_model], per-head probs for backward).
+pub fn multi_head_sdpa(
+    q: &Tensor,
+    k: &Tensor,
+    v: &Tensor,
+    n_heads: usize,
+    d_head: usize,
+    scale: Float,
+) -> Result<(Tensor, Vec<Tensor>)> {
+    let qh = split_heads(q, n_heads, d_head)?;
+    let kh = split_heads(k, n_heads, d_head)?;
+    let vh = split_heads(v, n_heads, d_head)?;
+    let mut outs = Vec::with_capacity(n_heads);
+    let mut probs_all = Vec::with_capacity(n_heads);
+    for h in 0..n_heads {
+        let (o, p) = sdpa2(&qh[h], &kh[h], &vh[h], scale)?;
+        outs.push(o);
+        probs_all.push(p);
+    }
+    let out = concat_heads(&outs)?;
+    Ok((out, probs_all))
+}
+
+/// Multi-head SDPA backward.
+pub fn multi_head_sdpa_backward(
+    dout: &Tensor,
+    probs_all: &[Tensor],
+    q: &Tensor,
+    k: &Tensor,
+    v: &Tensor,
+    n_heads: usize,
+    d_head: usize,
+    scale: Float,
+) -> Result<(Tensor, Tensor, Tensor)> {
+    let dout_h = split_heads(dout, n_heads, d_head)?;
+    let qh = split_heads(q, n_heads, d_head)?;
+    let kh = split_heads(k, n_heads, d_head)?;
+    let vh = split_heads(v, n_heads, d_head)?;
+
+    let mut dq_h = Vec::with_capacity(n_heads);
+    let mut dk_h = Vec::with_capacity(n_heads);
+    let mut dv_h = Vec::with_capacity(n_heads);
+    for h in 0..n_heads {
+        let (dq, dk, dv) =
+            sdpa2_backward(&dout_h[h], &probs_all[h], &qh[h], &kh[h], &vh[h], scale)?;
+        dq_h.push(dq);
+        dk_h.push(dk);
+        dv_h.push(dv);
+    }
+    Ok((concat_heads(&dq_h)?, concat_heads(&dk_h)?, concat_heads(&dv_h)?))
+}
+
+/// Switch-style load balancing loss:
+///   L_aux = n_experts * Σ_i (f_i * P_i)
+/// f_i = fraction of tokens that selected expert i (hard top-k)
+/// P_i = mean router probability for expert i (soft)
+pub fn load_balance_loss(
+    soft_probs: &Tensor,           // [tokens, n_experts]
+    indices: &[Vec<usize>],        // [tokens][top_k]
+    n_experts: usize,
+) -> Float {
+    let tokens = soft_probs.shape[0];
+    if tokens == 0 || n_experts == 0 {
+        return 0.0;
+    }
+    let mut counts = vec![0.0f32; n_experts];
+    for tok_idx in indices {
+        for &eid in tok_idx {
+            if eid < n_experts {
+                counts[eid] += 1.0;
+            }
+        }
+    }
+    // each token picks top_k experts; normalize by tokens
+    let inv_t = 1.0 / tokens as f32;
+    let mut f: Vec<Float> = counts.iter().map(|c| c * inv_t).collect();
+
+    // mean soft probability per expert
+    let mut p = vec![0.0f32; n_experts];
+    for t in 0..tokens {
+        for e in 0..n_experts {
+            p[e] += soft_probs.data[t * n_experts + e];
+        }
+    }
+    for e in 0..n_experts {
+        p[e] *= inv_t;
+    }
+
+    let mut loss = 0.0f32;
+    for e in 0..n_experts {
+        loss += f[e] * p[e];
+    }
+    loss * n_experts as f32
+}

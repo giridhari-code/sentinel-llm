@@ -37,6 +37,8 @@ impl Default for TrainConfig {
 #[derive(Debug, Clone)]
 pub struct TrainStepStats {
     pub loss: Float,
+    pub ce_loss: Float,
+    pub aux_loss: Float,
     pub tokens: usize,
     pub step: u64,
 }
@@ -93,13 +95,15 @@ impl Trainer {
         if seq < 2 {
             return Ok(TrainStepStats {
                 loss: 0.0,
+                ce_loss: 0.0,
+                aux_loss: 0.0,
                 tokens: 0,
                 step: self.global_step,
             });
         }
 
         let mut tape = Tape::new();
-        let (loss_v, param_vars) = forward_lm(&mut tape, &self.model, tokens)?;
+        let (loss_v, param_vars, ce_loss, aux_loss) = forward_lm(&mut tape, &self.model, tokens)?;
         let loss_val = tape.value(loss_v).data[0];
         tape.backward(loss_v)?;
 
@@ -110,6 +114,8 @@ impl Trainer {
         self.global_step += 1;
         Ok(TrainStepStats {
             loss: loss_val,
+            ce_loss,
+            aux_loss,
             tokens: seq - 1,
             step: self.global_step,
         })

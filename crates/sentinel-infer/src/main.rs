@@ -239,7 +239,7 @@ fn main() -> anyhow::Result<()> {
             };
 
             for s in &stats {
-                info!("step {} | loss={:.4} | tokens={}", s.step, s.loss, s.tokens);
+                info!("step {} | loss={:.4} ce={:.4} aux={:.4} | tokens={}", s.step, s.loss, s.ce_loss, s.aux_loss, s.tokens);
             }
             if let Some(last) = stats.last() {
                 println!(

@@ -1,7 +1,8 @@
 //! Computation tape and variable handles — includes SDPA + Softmax backward.
 
 use crate::ops::{
-    matmul2, sdpa2, sdpa2_backward, softmax_backward, softmax_last, transpose2,
+    matmul2, multi_head_sdpa, multi_head_sdpa_backward, sdpa2, sdpa2_backward,
+    softmax_backward, softmax_last, transpose2,
 };
 use sentinel_core::tensor::Tensor;
 use sentinel_core::types::Float;
@@ -32,6 +33,16 @@ pub(crate) enum Op {
         v: Var,
         scale: Float,
         probs: Tensor,
+    },
+    /// Multi-head SDPA with per-head cached probs
+    MultiHeadSdpa {
+        q: Var,
+        k: Var,
+        v: Var,
+        n_heads: usize,
+        d_head: usize,
+        scale: Float,
+        probs_all: Vec<Tensor>,
     },
 }
 
@@ -209,6 +220,40 @@ impl Tape {
         Ok(self.push(out, Op::Sdpa { q, k, v, scale, probs }))
     }
 
+
+    /// Multi-head scaled-dot-product attention.
+    /// Q,K,V: [seq, n_heads * d_head]
+    pub fn multi_head_sdpa(
+        &mut self,
+        q: Var,
+        k: Var,
+        v: Var,
+        n_heads: usize,
+        d_head: usize,
+        scale: Float,
+    ) -> Result<Var> {
+        let (out, probs_all) = multi_head_sdpa(
+            &self.nodes[q.0].value,
+            &self.nodes[k.0].value,
+            &self.nodes[v.0].value,
+            n_heads,
+            d_head,
+            scale,
+        )?;
+        Ok(self.push(
+            out,
+            Op::MultiHeadSdpa {
+                q,
+                k,
+                v,
+                n_heads,
+                d_head,
+                scale,
+                probs_all,
+            },
+        ))
+    }
+
     fn acc_grad(&mut self, v: Var, g: &Tensor) -> Result<()> {
         let node = &mut self.nodes[v.0];
         match &mut node.grad {
@@ -360,6 +405,29 @@ impl Tape {
                         &self.nodes[q.0].value,
                         &self.nodes[k.0].value,
                         &self.nodes[v.0].value,
+                        scale,
+                    )?;
+                    self.acc_grad(q, &dq)?;
+                    self.acc_grad(k, &dk)?;
+                    self.acc_grad(v, &dv)?;
+                }
+                Op::MultiHeadSdpa {
+                    q,
+                    k,
+                    v,
+                    n_heads,
+                    d_head,
+                    scale,
+                    probs_all,
+                } => {
+                    let (dq, dk, dv) = multi_head_sdpa_backward(
+                        &grad,
+                        &probs_all,
+                        &self.nodes[q.0].value,
+                        &self.nodes[k.0].value,
+                        &self.nodes[v.0].value,
+                        n_heads,
+                        d_head,
                         scale,
                     )?;
                     self.acc_grad(q, &dq)?;
