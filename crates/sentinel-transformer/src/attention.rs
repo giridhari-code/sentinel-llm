@@ -95,6 +95,7 @@ impl MultiHeadAttention {
         let d = self.d_model;
 
         let (q, k, v) = self.project_qkv(&x_n, 0)?;
+        // causal=true by default (prefill: lower-triangular mask)
         let attn = scaled_dot_product_attention(&q, &k, &v, None)?;
         let attn = attn.reshape(&[seq, d])?;
         let out = matmul(&attn, &self.wo)?;
@@ -135,6 +136,7 @@ impl MultiHeadAttention {
         let v_full = Self::unsqueeze_batch(&updated.values)?;
 
         // Q is only the new positions: [1, H, new_seq, D]
+        // causal mask with pos_offset = Tk-Tq for decode
         let attn = scaled_dot_product_attention(&q, &k_full, &v_full, None)?;
         let attn = attn.reshape(&[new_seq, d])?;
         let out = matmul(&attn, &self.wo)?;

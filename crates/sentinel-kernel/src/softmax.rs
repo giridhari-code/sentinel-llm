@@ -23,9 +23,16 @@ pub fn softmax(x: &Tensor) -> Result<Tensor> {
             out[start + j] = e;
             sum += e;
         }
-        let inv = 1.0 / sum;
-        for j in 0..last_dim {
-            out[start + j] *= inv;
+        if sum > 0.0 && sum.is_finite() {
+            let inv = 1.0 / sum;
+            for j in 0..last_dim {
+                out[start + j] *= inv;
+            }
+        } else {
+            // fully masked row — uniform zero (should not happen with valid causal)
+            for j in 0..last_dim {
+                out[start + j] = 0.0;
+            }
         }
     }
 

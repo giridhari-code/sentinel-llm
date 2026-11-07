@@ -121,8 +121,25 @@ pub fn transpose2(t: &Tensor) -> Result<Tensor> {
     Tensor::from_vec(data, &[n, m])
 }
 
-/// Scaled dot-product attention for 2D Q,K,V: each [seq, d]
-/// scores = Q K^T / scale; probs = softmax(scores); out = probs @ V
+/// Apply causal mask on 2D scores [Tq, Tk].
+/// Query i at absolute position pos_offset+i attends only to keys j <= pos.
+pub fn apply_causal_mask_2d(scores: &mut Tensor, pos_offset: usize) {
+    let tq = scores.shape[0];
+    let tk = scores.shape[1];
+    let neg = Float::NEG_INFINITY;
+    for i in 0..tq {
+        let q_pos = pos_offset + i;
+        let row = i * tk;
+        for j in 0..tk {
+            if j > q_pos {
+                scores.data[row + j] = neg;
+            }
+        }
+    }
+}
+
+/// Scaled dot-product attention for 2D Q,K,V (causal by default).
+/// Q: [Tq, d], K/V: [Tk, d] — Tq may equal Tk (train/prefill).
 /// Returns (out, probs) — probs cached for backward.
 pub fn sdpa2(
     q: &Tensor,
@@ -130,18 +147,32 @@ pub fn sdpa2(
     v: &Tensor,
     scale: Float,
 ) -> Result<(Tensor, Tensor)> {
-    let seq = q.shape[0];
+    sdpa2_ex(q, k, v, scale, true)
+}
+
+pub fn sdpa2_ex(
+    q: &Tensor,
+    k: &Tensor,
+    v: &Tensor,
+    scale: Float,
+    causal: bool,
+) -> Result<(Tensor, Tensor)> {
+    let tq = q.shape[0];
     let d = q.shape[1];
-    if k.shape != [seq, d] || v.shape[0] != seq {
+    let tk = k.shape[0];
+    if k.shape[1] != d || v.shape != k.shape {
         return Err(SentinelError::ShapeMismatch {
-            expected: q.shape.clone(),
+            expected: vec![tk, d],
             got: k.shape.clone(),
         });
     }
-    // scores [seq, seq] = Q @ K^T * scale
     let k_t = transpose2(k)?;
     let mut scores = matmul2(q, &k_t)?;
     scores.scale_inplace(scale);
+    if causal {
+        let pos_offset = if tk >= tq { tk - tq } else { 0 };
+        apply_causal_mask_2d(&mut scores, pos_offset);
+    }
     let probs = softmax_last(&scores)?;
     let out = matmul2(&probs, v)?;
     Ok((out, probs))

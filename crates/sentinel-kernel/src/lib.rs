@@ -14,7 +14,7 @@ pub mod softmax;
 pub mod rope;
 
 pub use gemm::matmul;
-pub use attention::scaled_dot_product_attention;
+pub use attention::{scaled_dot_product_attention, scaled_dot_product_attention_ex, apply_causal_mask};
 pub use norm::rms_norm;
 pub use activation::silu;
 pub use softmax::softmax;
