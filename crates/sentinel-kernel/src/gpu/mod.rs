@@ -1,22 +1,22 @@
 //! Tesla-2 GPU backend.
 //!
-//! Design:
-//! - Own CUDA kernels (see `cuda/gemm.cu`) — not cuBLAS / FlashAttention
-//! - Optional compile: `--features cuda`
-//! - Without the feature, GPU APIs return a clear error
+//! - Own CUDA kernels in `cuda/` (not cuBLAS / FlashAttention)
+//! - `HostMirror` path exercises the full API without a GPU
+//! - `--features cuda` enables TeslaCuda backend flag for real VRAM path
 
 mod buffer;
 mod context;
+mod dispatch;
 mod gemm;
 
-pub use buffer::GpuBuffer;
+pub use buffer::{download, upload, GpuBuffer};
 pub use context::{GpuBackend, GpuContext};
-pub use gemm::gpu_matmul;
+pub use dispatch::{active_device, gpu_smoke, matmul_auto, set_device};
+pub use gemm::{gpu_matmul, matmul_on_device};
 
 use crate::device::Device;
 use sentinel_core::{Result, SentinelError};
 
-/// Create a GPU context for `device`, or error if unsupported / feature off.
 pub fn create_context(device: Device) -> Result<GpuContext> {
     match device {
         Device::Cpu => Err(SentinelError::Kernel(
@@ -26,7 +26,6 @@ pub fn create_context(device: Device) -> Result<GpuContext> {
     }
 }
 
-/// True if this build was compiled with Tesla-2 CUDA support.
 pub fn cuda_feature_enabled() -> bool {
     cfg!(feature = "cuda")
 }

@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 use log::info;
 use sentinel_core::config::ModelConfig;
 use sentinel_core::{product_tag, BHUTU, DOBU, ORBIT, SENTINEL, TESLA};
-use sentinel_kernel::{cuda_feature_enabled, Device, KERNEL_VERSION};
+use sentinel_kernel::{cuda_feature_enabled, gpu_smoke, set_device, Device, KERNEL_VERSION};
 use sentinel_tokenizer::{load_tokenizer, Tokenizer};
 use sentinel_train::{evaluate_dataset, evaluate_tokens, load_checkpoint, TrainConfig, Trainer};
 use sentinel_transformer::{SamplingConfig, SentinelModel};
@@ -63,6 +63,8 @@ enum Commands {
         #[arg(long)]
         load: Option<PathBuf>,
     },
+    /// Tesla GPU/device smoke (matmul parity)
+    GpuSmoke,
     /// Bhutu HTTP API (company MVP serve)
     Serve {
         #[arg(long, default_value = "127.0.0.1:8787")]
@@ -129,11 +131,8 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let tokenizer = load_tokenizer(cli.tokenizer.as_deref())?;
     let device = Device::parse(&cli.device).map_err(|e| anyhow::anyhow!(e))?;
-    if device.is_cuda() {
-        match sentinel_kernel::create_context(device) {
-            Ok(ctx) => log::info!("GPU context: {} ({})", ctx.device_name, ctx.backend),
-            Err(e) => log::warn!("GPU requested but unavailable: {}", e),
-        }
+    if let Err(e) = set_device(device) {
+        log::warn!("set_device({}): {}", device, e);
     }
 
     match cli.command {
@@ -357,6 +356,14 @@ fn main() -> anyhow::Result<()> {
         }
 
 
+        Commands::GpuSmoke => {
+            let (dev, err) = gpu_smoke()?;
+            println!("Tesla gpu-smoke");
+            println!("  device     : {}", dev);
+            println!("  cuda_feat  : {}", cuda_feature_enabled());
+            println!("  max|err|   : {:.6e}", err);
+            println!("  status     : {}", if err < 1e-4 { "ok" } else { "mismatch" });
+        }
         Commands::Serve { bind, load } => {
             info!("Bhutu serve on http://{}", bind);
             let model = load_model(load.as_ref())?;

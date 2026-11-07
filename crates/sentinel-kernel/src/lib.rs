@@ -1,8 +1,7 @@
 //! **Tesla** — Orbit compute kernel (CPU Tesla-1 / CUDA Tesla-2).
-//! Tesla Kernel — custom pure-Rust (+ optional CUDA) compute for Sentinel.
 //!
 //! - **Tesla-1**: CPU + Rayon (default)
-//! - **Tesla-2**: CUDA backend scaffold (`--features cuda`), own kernels in `cuda/`
+//! - **Tesla-2**: GPU backend (`set_device(Cuda)`, optional `--features cuda`)
 //!
 //! No third-party GPU math libraries (no cuBLAS / FlashAttention).
 
@@ -26,9 +25,11 @@ pub use rope::{
     apply_rope, apply_rope_with_offset, apply_rope_packed, apply_rope_packed_backward,
 };
 pub use device::Device;
-pub use gpu::{create_context, cuda_feature_enabled, GpuBuffer, GpuContext};
+pub use gpu::{
+    active_device, create_context, cuda_feature_enabled, gpu_smoke, matmul_auto, set_device,
+    GpuBuffer, GpuContext,
+};
 
-/// Kernel version string
 pub const KERNEL_VERSION: &str = if cfg!(feature = "cuda") {
     "Tesla-2"
 } else {
