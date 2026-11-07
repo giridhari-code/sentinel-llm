@@ -8,7 +8,7 @@ use log::info;
 use sentinel_core::config::ModelConfig;
 use sentinel_kernel::KERNEL_VERSION;
 use sentinel_tokenizer::{load_tokenizer, Tokenizer};
-use sentinel_train::{TrainConfig, Trainer};
+use sentinel_train::{evaluate_dataset, evaluate_tokens, load_checkpoint, TrainConfig, Trainer};
 use sentinel_transformer::{SamplingConfig, SentinelModel};
 use std::path::PathBuf;
 
@@ -72,6 +72,20 @@ enum Commands {
         #[arg(long)]
         load: Option<PathBuf>,
     },
+    /// Evaluate loss / perplexity on token ids or synthetic data
+    Eval {
+        #[arg(long, default_value = "64")]
+        seq_len: usize,
+        /// Max windows to score (0 = all)
+        #[arg(long, default_value = "0")]
+        max_windows: usize,
+        /// Token-id file (whitespace-separated u32)
+        #[arg(long)]
+        data: Option<PathBuf>,
+        /// Load checkpoint
+        #[arg(long)]
+        load: Option<PathBuf>,
+    },
     Tok {
         text: String,
         #[arg(long)]
@@ -101,6 +115,7 @@ fn main() -> anyhow::Result<()> {
             println!("Inference    : Prefill → Decode (KV cache)");
             println!("Sampling     : temperature / top-p / top-k");
             println!("Training     : Full autograd + AdamW + ckpt");
+            println!("Eval         : CE loss + perplexity");
             println!("Kernel       : {}", KERNEL_VERSION);
             println!("Model        : {}", config.name);
             println!(
@@ -252,6 +267,58 @@ fn main() -> anyhow::Result<()> {
                 println!("Checkpoint saved → {}", path.display());
             }
         }
+
+        Commands::Eval {
+            seq_len,
+            max_windows,
+            data,
+            load,
+        } => {
+            info!("Eval / perplexity | seq_len={}", seq_len);
+            let model = if let Some(ref path) = load {
+                info!("Loading checkpoint {}", path.display());
+                load_checkpoint(path)?
+            } else {
+                let mut model_cfg = ModelConfig::sentinel_small();
+                model_cfg.d_model = 128;
+                model_cfg.n_heads = 4;
+                model_cfg.d_head = 32;
+                model_cfg.d_ff = 256;
+                model_cfg.n_layers = 2;
+                model_cfg.n_loops = 1;
+                model_cfg.n_experts = 2;
+                model_cfg.vocab_size = 256;
+                model_cfg.max_seq_len = seq_len;
+                SentinelModel::new(model_cfg)
+            };
+
+            let metrics = if let Some(ref path) = data {
+                let ds = sentinel_train::TokenDataset::from_id_file(path, seq_len)?;
+                if max_windows > 0 {
+                    let take = max_windows.saturating_mul(seq_len).max(seq_len);
+                    let end = ds.tokens.len().min(take);
+                    evaluate_tokens(&model, &ds.tokens[..end], seq_len, None)?
+                } else {
+                    evaluate_dataset(&model, &ds)?
+                }
+            } else {
+                let stream: Vec<u32> = (0..seq_len * 32).map(|i| (i % 256) as u32).collect();
+                let stream = if max_windows > 0 {
+                    let take = max_windows.saturating_mul(seq_len).max(seq_len);
+                    stream[..stream.len().min(take)].to_vec()
+                } else {
+                    stream
+                };
+                evaluate_tokens(&model, &stream, seq_len, None)?
+            };
+
+            println!("Eval results");
+            println!("  windows : {}", metrics.num_windows);
+            println!("  tokens  : {}", metrics.num_tokens);
+            println!("  loss    : {:.6}", metrics.loss);
+            println!("  ppl     : {:.4}", metrics.perplexity);
+        }
+
         Commands::Tok { text, bos, eos } => {
             let ids = tokenizer.encode_with_special(&text, bos, eos)?;
             println!("Text   : {:?}", text);

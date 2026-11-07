@@ -26,6 +26,8 @@ pub struct TrainConfig {
     pub warmup_steps: u64,
     /// Total steps for cosine decay (0 = constant lr)
     pub total_steps: u64,
+    /// Run eval every N steps during train_on_* (0 = never)
+    pub eval_every: u64,
 }
 
 impl Default for TrainConfig {
@@ -39,6 +41,7 @@ impl Default for TrainConfig {
             grad_clip: 1.0,
             warmup_steps: 100,
             total_steps: 10_000,
+            eval_every: 0,
         }
     }
 }
