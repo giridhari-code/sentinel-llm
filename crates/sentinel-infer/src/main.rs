@@ -6,7 +6,7 @@
 use clap::{Parser, Subcommand};
 use log::info;
 use sentinel_core::config::ModelConfig;
-use sentinel_kernel::KERNEL_VERSION;
+use sentinel_kernel::{cuda_feature_enabled, Device, KERNEL_VERSION};
 use sentinel_tokenizer::{load_tokenizer, Tokenizer};
 use sentinel_train::{evaluate_dataset, evaluate_tokens, load_checkpoint, TrainConfig, Trainer};
 use sentinel_transformer::{SamplingConfig, SentinelModel};
@@ -17,6 +17,10 @@ use std::path::PathBuf;
 struct Cli {
     #[arg(long, global = true)]
     tokenizer: Option<PathBuf>,
+
+    /// Compute device: cpu | cuda | cuda:0
+    #[arg(long, global = true, default_value = "cpu")]
+    device: String,
 
     #[command(subcommand)]
     command: Commands,
@@ -103,6 +107,13 @@ fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
     let tokenizer = load_tokenizer(cli.tokenizer.as_deref())?;
+    let device = Device::parse(&cli.device).map_err(|e| anyhow::anyhow!(e))?;
+    if device.is_cuda() {
+        match sentinel_kernel::create_context(device) {
+            Ok(ctx) => log::info!("GPU context: {} ({})", ctx.device_name, ctx.backend),
+            Err(e) => log::warn!("GPU requested but unavailable: {}", e),
+        }
+    }
 
     match cli.command {
         Commands::Info { size } => {
@@ -117,6 +128,7 @@ fn main() -> anyhow::Result<()> {
             println!("Training     : Full autograd + AdamW + ckpt");
             println!("Eval         : CE loss + perplexity");
             println!("Kernel       : {}", KERNEL_VERSION);
+            println!("Device       : {} (cuda_feature={})", device, cuda_feature_enabled());
             println!("Model        : {}", config.name);
             println!(
                 "d_model={} n_layers={} n_loops={} n_experts={} top_k={}",

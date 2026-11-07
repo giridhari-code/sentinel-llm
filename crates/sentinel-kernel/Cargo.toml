@@ -4,7 +4,12 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "Tesla Kernel 1 — custom pure-Rust compute kernels (no third-party)"
+description = "Tesla Kernel — custom CPU/CUDA compute (no third-party math libs)"
+
+[features]
+default = []
+# Enable Tesla-2 CUDA context (requires CUDA toolkit for real device launch)
+cuda = []
 
 [dependencies]
 sentinel-core = { workspace = true }
@@ -12,3 +17,4 @@ rayon = { workspace = true }
 bytemuck = { workspace = true }
 num-traits = { workspace = true }
 log = { workspace = true }
+serde = { workspace = true }
