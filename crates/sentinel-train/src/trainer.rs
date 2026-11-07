@@ -4,6 +4,7 @@ use crate::ag_model::forward_lm;
 use crate::checkpoint::{load_checkpoint, save_checkpoint};
 use crate::dataset::TokenDataset;
 use crate::optim::{AdamW, AdamWConfig};
+use crate::schedule::{clip_grad_norm, CosineWithWarmup};
 use log::info;
 use sentinel_autograd::Tape;
 use sentinel_core::config::ModelConfig;
@@ -18,8 +19,13 @@ pub struct TrainConfig {
     pub weight_decay: f32,
     pub max_seq_len: usize,
     pub train_embed: bool,
-    /// Use full autograd through all layers (recommended)
     pub full_autograd: bool,
+    /// Max L2 norm for gradient clipping (0 = disabled)
+    pub grad_clip: f32,
+    /// Warmup steps for cosine schedule
+    pub warmup_steps: u64,
+    /// Total steps for cosine decay (0 = constant lr)
+    pub total_steps: u64,
 }
 
 impl Default for TrainConfig {
@@ -30,6 +36,9 @@ impl Default for TrainConfig {
             max_seq_len: 256,
             train_embed: true,
             full_autograd: true,
+            grad_clip: 1.0,
+            warmup_steps: 100,
+            total_steps: 10_000,
         }
     }
 }
@@ -48,6 +57,7 @@ pub struct Trainer {
     pub optim: AdamW,
     pub cfg: TrainConfig,
     pub global_step: u64,
+    pub schedule: Option<CosineWithWarmup>,
 }
 
 impl Trainer {
@@ -61,11 +71,21 @@ impl Trainer {
             "Trainer ready | lr={} wd={} full_autograd={}",
             train_cfg.lr, train_cfg.weight_decay, train_cfg.full_autograd
         );
+        let schedule = if train_cfg.total_steps > 0 {
+            Some(CosineWithWarmup::new(
+                train_cfg.lr,
+                train_cfg.warmup_steps,
+                train_cfg.total_steps,
+            ))
+        } else {
+            None
+        };
         Self {
             model: SentinelModel::new(model_cfg),
             optim,
             cfg: train_cfg,
             global_step: 0,
+            schedule,
         }
     }
 
@@ -76,11 +96,21 @@ impl Trainer {
             weight_decay: train_cfg.weight_decay,
             ..AdamWConfig::default()
         });
+        let schedule = if train_cfg.total_steps > 0 {
+            Some(CosineWithWarmup::new(
+                train_cfg.lr,
+                train_cfg.warmup_steps,
+                train_cfg.total_steps,
+            ))
+        } else {
+            None
+        };
         Ok(Self {
             model,
             optim,
             cfg: train_cfg,
             global_step: 0,
+            schedule,
         })
     }
 
@@ -102,13 +132,16 @@ impl Trainer {
             });
         }
 
+        // Cosine LR with warmup
+        if let Some(ref sched) = self.schedule {
+            self.optim.set_lr(sched.lr_at(self.global_step));
+        }
+
         let mut tape = Tape::new();
         let (loss_v, param_vars, ce_loss, aux_loss) = forward_lm(&mut tape, &self.model, tokens)?;
         let loss_val = tape.value(loss_v).data[0];
         tape.backward(loss_v)?;
 
-        // Apply grads: match param_vars order to fresh param list by re-running
-        // We update tensors that appear as Leaf params — map by walking model in same order as forward_lm.
         self.apply_grads_from_tape(&tape, &param_vars)?;
 
         self.global_step += 1;
@@ -213,6 +246,8 @@ impl Trainer {
                     .zip(unique.iter())
                     .all(|(g, p)| g.numel() == p.numel())
             {
+                let mut grad_refs = grad_refs;
+                let _gnorm = clip_grad_norm(&mut grad_refs, self.cfg.grad_clip);
                 let g_refs: Vec<&sentinel_core::tensor::Tensor> = grad_refs.iter().collect();
                 self.optim.step(&mut unique, &g_refs);
             } else {

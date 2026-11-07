@@ -9,3 +9,4 @@ description = "Reverse-mode autograd tape for Sentinel (pure Rust)"
 [dependencies]
 sentinel-core = { workspace = true }
 log = { workspace = true }
+sentinel-kernel = { workspace = true }

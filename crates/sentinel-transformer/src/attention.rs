@@ -1,4 +1,7 @@
 //! Multi-head self-attention with real KV cache (Prefill + Decode).
+//!
+//! Layout matches training AG path:
+//!   Q,K,V [seq, d_model] → reshape [1,H,T,Dh] → RoPE → causal SDPA → [seq, d_model].
 
 use sentinel_core::tensor::Tensor;
 use sentinel_core::{Result, ModelConfig, SentinelError};
@@ -23,6 +26,10 @@ pub struct MultiHeadAttention {
 impl MultiHeadAttention {
     pub fn new(config: &ModelConfig) -> Self {
         let d = config.d_model;
+        assert!(
+            config.n_heads * config.d_head == d,
+            "d_model must equal n_heads * d_head for multi-head parity"
+        );
         let std = (1.0 / d as f32).sqrt();
         Self {
             wq: Tensor::randn(&[d, d], 0.0, std),

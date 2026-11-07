@@ -71,9 +71,15 @@ pub fn forward_lm(
 
             let residual = x;
             let xn = tape.rms_norm(x, attn_nw, layer.attn.norm_eps)?;
+            // Same layout as infer MultiHeadAttention: Q,K,V [seq, d_model]
             let q = tape.matmul(xn, wq)?;
             let k = tape.matmul(xn, wk)?;
             let v = tape.matmul(xn, wv)?;
+            // RoPE on Q,K (packed heads) — matches infer apply_rope_with_offset
+            let theta = layer.attn.rope_theta;
+            let q = tape.rope_packed(q, n_heads, d_head, theta, 0)?;
+            let k = tape.rope_packed(k, n_heads, d_head, theta, 0)?;
+            // Multi-head causal SDPA (same math as kernel scaled_dot_product_attention)
             let scale = 1.0 / (d_head as f32).sqrt();
             let attn = tape.multi_head_sdpa(q, k, v, n_heads, d_head, scale)?;
             let attn_out = tape.matmul(attn, wo)?;

@@ -4,6 +4,7 @@ use crate::ops::{
     matmul2, multi_head_sdpa, multi_head_sdpa_backward, sdpa2, sdpa2_backward,
     softmax_backward, softmax_last, transpose2,
 };
+use sentinel_kernel::{apply_rope_packed, apply_rope_packed_backward};
 use sentinel_core::tensor::Tensor;
 use sentinel_core::types::Float;
 use sentinel_core::{Result, SentinelError};
@@ -43,6 +44,14 @@ pub(crate) enum Op {
         d_head: usize,
         scale: Float,
         probs_all: Vec<Tensor>,
+    },
+    /// RoPE on packed [seq, n_heads * d_head]
+    RopePacked {
+        x: Var,
+        n_heads: usize,
+        d_head: usize,
+        theta: Float,
+        pos_offset: usize,
     },
 }
 
@@ -254,6 +263,35 @@ impl Tape {
         ))
     }
 
+
+    /// RoPE on multi-head packed tensor [seq, n_heads * d_head] (matches infer layout).
+    pub fn rope_packed(
+        &mut self,
+        x: Var,
+        n_heads: usize,
+        d_head: usize,
+        theta: Float,
+        pos_offset: usize,
+    ) -> Result<Var> {
+        let out = apply_rope_packed(
+            &self.nodes[x.0].value,
+            n_heads,
+            d_head,
+            theta,
+            pos_offset,
+        )?;
+        Ok(self.push(
+            out,
+            Op::RopePacked {
+                x,
+                n_heads,
+                d_head,
+                theta,
+                pos_offset,
+            },
+        ))
+    }
+
     fn acc_grad(&mut self, v: Var, g: &Tensor) -> Result<()> {
         let node = &mut self.nodes[v.0];
         match &mut node.grad {
@@ -433,6 +471,18 @@ impl Tape {
                     self.acc_grad(q, &dq)?;
                     self.acc_grad(k, &dk)?;
                     self.acc_grad(v, &dv)?;
+                }
+                Op::RopePacked {
+                    x,
+                    n_heads,
+                    d_head,
+                    theta,
+                    pos_offset,
+                } => {
+                    let dx = apply_rope_packed_backward(
+                        &grad, n_heads, d_head, theta, pos_offset,
+                    )?;
+                    self.acc_grad(x, &dx)?;
                 }
             }
         }

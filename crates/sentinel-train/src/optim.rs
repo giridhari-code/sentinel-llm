@@ -45,6 +45,14 @@ impl AdamW {
         }
     }
 
+    pub fn set_lr(&mut self, lr: f32) {
+        self.cfg.lr = lr;
+    }
+
+    pub fn lr(&self) -> f32 {
+        self.cfg.lr
+    }
+
     fn ensure_slot(&mut self, idx: usize, n: usize) {
         while self.slots.len() <= idx {
             self.slots.push(Slot {
