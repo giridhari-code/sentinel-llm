@@ -1,3 +1,5 @@
+//! **DoBu** — Orbit data & tokenizer pipeline for Sentinel.
+
 //! Sentinel Tokenizer
 //!
 //! Supports:

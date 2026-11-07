@@ -6,8 +6,10 @@ pub mod config;
 pub mod error;
 pub mod tensor;
 pub mod types;
+pub mod brand;
 
 pub use config::ModelConfig;
 pub use error::{Result, SentinelError};
 pub use tensor::Tensor;
 pub use types::*;
+pub use brand::{ORBIT, SENTINEL, TESLA, DOBU, BHUTU, product_tag};

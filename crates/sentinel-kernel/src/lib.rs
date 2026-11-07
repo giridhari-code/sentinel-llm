@@ -1,3 +1,4 @@
+//! **Tesla** — Orbit compute kernel (CPU Tesla-1 / CUDA Tesla-2).
 //! Tesla Kernel — custom pure-Rust (+ optional CUDA) compute for Sentinel.
 //!
 //! - **Tesla-1**: CPU + Rayon (default)

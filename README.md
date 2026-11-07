@@ -1,11 +1,22 @@
-# Sentinel
+# Orbit · Sentinel
 
-**MoE + Looped Transformer LLM** built entirely in **Rust** with a **custom kernel** — **Tesla Kernel 1**.
+**Sentinel** LLM on the **Orbit** stack — **Rust**, custom **Tesla** kernel, **DoBu** data, **Bhutu** runtime.
 
 > No third-party kernels. No CUDA/cuDNN. No FlashAttention. No HuggingFace.  
 > Pure Rust. Fully owned. "Mere khuda ka kernel."
 
 ---
+
+## Orbit names
+
+| Name | Role |
+|------|------|
+| **Orbit** | Full platform / stack |
+| **Sentinel** | The LLM (MoE + looped Transformer) |
+| **Tesla** | Custom compute kernel (Tesla-1 CPU, Tesla-2 CUDA) |
+| **DoBu** | Data + tokenizer pipeline |
+| **Bhutu** | Inference runtime (prefill / decode / serve) |
+
 
 ## Architecture
 

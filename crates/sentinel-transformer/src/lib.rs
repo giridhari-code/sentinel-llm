@@ -1,3 +1,4 @@
+//! **Sentinel** — Orbit MoE + Looped Transformer model.
 //! Looped Transformer architecture for Sentinel.
 //!
 //! Inference path: **Prefill** (prompt) → **Decode** (autoregressive).

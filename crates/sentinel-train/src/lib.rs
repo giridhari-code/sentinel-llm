@@ -1,3 +1,4 @@
+//! **Orbit** training — autograd, checkpoints, DoBu datasets, eval.
 //! Training loop for Sentinel: full autograd, checkpoints, datasets.
 
 pub mod ag_model;

@@ -1,4 +1,4 @@
-//! Sentinel Inference CLI
+//! **Bhutu** — Orbit inference runtime CLI (Prefill / Decode / Eval / Train).
 //!
 //! Inference: Prefill → Decode (KV cache) + temperature / top-p sampling
 //! Training:  causal LM steps via sentinel-train
@@ -6,6 +6,7 @@
 use clap::{Parser, Subcommand};
 use log::info;
 use sentinel_core::config::ModelConfig;
+use sentinel_core::{product_tag, BHUTU, DOBU, ORBIT, SENTINEL, TESLA};
 use sentinel_kernel::{cuda_feature_enabled, Device, KERNEL_VERSION};
 use sentinel_tokenizer::{load_tokenizer, Tokenizer};
 use sentinel_train::{evaluate_dataset, evaluate_tokens, load_checkpoint, TrainConfig, Trainer};
@@ -13,7 +14,7 @@ use sentinel_transformer::{SamplingConfig, SentinelModel};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "sentinel", about = "Sentinel — MoE Looped Transformer LLM (Tesla Kernel)")]
+#[command(name = "sentinel", about = "Orbit · Sentinel LLM · Tesla kernel · DoBu data · Bhutu runtime")]
 struct Cli {
     #[arg(long, global = true)]
     tokenizer: Option<PathBuf>,
@@ -121,13 +122,16 @@ fn main() -> anyhow::Result<()> {
                 "medium" => ModelConfig::sentinel_medium(),
                 _ => ModelConfig::sentinel_small(),
             };
-            println!("SENTINEL — Orbit Model");
-            println!("Architecture : MoE + Looped Transformer");
+            println!("{}", product_tag());
+            println!("Platform     : {}", ORBIT);
+            println!("Model        : {} (MoE + Looped Transformer)", SENTINEL);
+            println!("Kernel       : {} ({})", TESLA, KERNEL_VERSION);
+            println!("Data         : {} (tokenizer / datasets)", DOBU);
+            println!("Runtime      : {} (prefill → decode)", BHUTU);
             println!("Inference    : Prefill → Decode (KV cache)");
             println!("Sampling     : temperature / top-p / top-k");
             println!("Training     : Full autograd + AdamW + ckpt");
             println!("Eval         : CE loss + perplexity");
-            println!("Kernel       : {}", KERNEL_VERSION);
             println!("Device       : {} (cuda_feature={})", device, cuda_feature_enabled());
             println!("Model        : {}", config.name);
             println!(
