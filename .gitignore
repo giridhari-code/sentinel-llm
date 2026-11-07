@@ -16,6 +16,7 @@ Thumbs.db
 # Models & checkpoints
 models/**
 !models/.gitkeep
+!models/*.ckpt
 *.bin
 *.safetensors
 *.pt

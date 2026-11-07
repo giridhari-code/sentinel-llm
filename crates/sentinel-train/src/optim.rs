@@ -71,9 +71,13 @@ impl AdamW {
         assert_eq!(params.len(), grads.len());
         self.step += 1;
         let t = self.step as f32;
-        let cfg = &self.cfg;
-        let bc1 = 1.0 - cfg.beta1.powf(t);
-        let bc2 = 1.0 - cfg.beta2.powf(t);
+        let lr = self.cfg.lr;
+        let beta1 = self.cfg.beta1;
+        let beta2 = self.cfg.beta2;
+        let eps = self.cfg.eps;
+        let weight_decay = self.cfg.weight_decay;
+        let bc1 = 1.0 - beta1.powf(t);
+        let bc2 = 1.0 - beta2.powf(t);
 
         for (i, (p, g)) in params.iter_mut().zip(grads.iter()).enumerate() {
             assert_eq!(p.numel(), g.numel());
@@ -81,16 +85,15 @@ impl AdamW {
             let slot = &mut self.slots[i];
 
             for j in 0..p.numel() {
-                let mut gi = g.data[j];
-                // decoupled weight decay
-                if cfg.weight_decay != 0.0 {
-                    p.data[j] *= 1.0 - cfg.lr * cfg.weight_decay;
+                let gi = g.data[j];
+                if weight_decay != 0.0 {
+                    p.data[j] *= 1.0 - lr * weight_decay;
                 }
-                slot.m[j] = cfg.beta1 * slot.m[j] + (1.0 - cfg.beta1) * gi;
-                slot.v[j] = cfg.beta2 * slot.v[j] + (1.0 - cfg.beta2) * gi * gi;
+                slot.m[j] = beta1 * slot.m[j] + (1.0 - beta1) * gi;
+                slot.v[j] = beta2 * slot.v[j] + (1.0 - beta2) * gi * gi;
                 let mhat = slot.m[j] / bc1;
                 let vhat = slot.v[j] / bc2;
-                p.data[j] -= cfg.lr * mhat / (vhat.sqrt() + cfg.eps);
+                p.data[j] -= lr * mhat / (vhat.sqrt() + eps);
             }
         }
     }

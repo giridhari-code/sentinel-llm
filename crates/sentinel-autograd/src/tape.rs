@@ -117,8 +117,8 @@ impl Tape {
     }
 
     pub fn mul(&mut self, a: Var, b: Var) -> Result<Var> {
-        let va = &self.nodes[a.0].value;
-        let vb = &self.nodes[b.0].value;
+        let va = self.nodes[a.0].value.clone();
+        let vb = self.nodes[b.0].value.clone();
         if va.shape != vb.shape {
             return Err(SentinelError::ShapeMismatch {
                 expected: va.shape.clone(),
@@ -142,7 +142,7 @@ impl Tape {
     }
 
     pub fn silu(&mut self, x: Var) -> Result<Var> {
-        let v = &self.nodes[x.0].value;
+        let v = self.nodes[x.0].value.clone();
         let data: Vec<Float> = v
             .data
             .iter()
@@ -156,8 +156,8 @@ impl Tape {
     }
 
     pub fn rms_norm(&mut self, x: Var, weight: Var, eps: Float) -> Result<Var> {
-        let xv = &self.nodes[x.0].value;
-        let wv = &self.nodes[weight.0].value;
+        let xv = self.nodes[x.0].value.clone();
+        let wv = self.nodes[weight.0].value.clone();
         let last = *xv.shape.last().unwrap();
         let outer = xv.numel() / last;
         let mut out = vec![0.0; xv.numel()];
@@ -178,7 +178,7 @@ impl Tape {
     }
 
     pub fn embed(&mut self, weight: Var, indices: &[u32]) -> Result<Var> {
-        let w = &self.nodes[weight.0].value;
+        let w = self.nodes[weight.0].value.clone();
         let d = w.shape[1];
         let mut data = Vec::with_capacity(indices.len() * d);
         for &id in indices {
@@ -319,8 +319,8 @@ impl Tape {
             match op {
                 Op::Leaf { .. } => {}
                 Op::Matmul { a, b } => {
-                    let va = &self.nodes[a.0].value;
-                    let vb = &self.nodes[b.0].value;
+                    let va = self.nodes[a.0].value.clone();
+                    let vb = self.nodes[b.0].value.clone();
                     let (m, k) = (va.shape[0], va.shape[1]);
                     let n = vb.shape[1];
                     let mut da = vec![0.0; m * k];
@@ -351,8 +351,8 @@ impl Tape {
                     self.acc_grad(b, &grad)?;
                 }
                 Op::Mul { a, b } => {
-                    let va = &self.nodes[a.0].value;
-                    let vb = &self.nodes[b.0].value;
+                    let va = self.nodes[a.0].value.clone();
+                    let vb = self.nodes[b.0].value.clone();
                     let da: Vec<Float> = grad
                         .data
                         .iter()
@@ -374,7 +374,7 @@ impl Tape {
                     self.acc_grad(x, &g)?;
                 }
                 Op::Silu { x } => {
-                    let v = &self.nodes[x.0].value;
+                    let v = self.nodes[x.0].value.clone();
                     let mut gx = vec![0.0; v.numel()];
                     for i in 0..v.numel() {
                         let a = v.data[i];
@@ -384,8 +384,8 @@ impl Tape {
                     self.acc_grad(x, &Tensor::from_vec(gx, &v.shape)?)?;
                 }
                 Op::RmsNorm { x, weight, eps } => {
-                    let xv = &self.nodes[x.0].value;
-                    let wv = &self.nodes[weight.0].value;
+                    let xv = self.nodes[x.0].value.clone();
+                    let wv = self.nodes[weight.0].value.clone();
                     let last = *xv.shape.last().unwrap();
                     let outer = xv.numel() / last;
                     let mut gx = vec![0.0; xv.numel()];
@@ -408,7 +408,7 @@ impl Tape {
                     self.acc_grad(weight, &Tensor::from_vec(gw, &wv.shape)?)?;
                 }
                 Op::Embed { weight, indices } => {
-                    let w = &self.nodes[weight.0].value;
+                    let w = self.nodes[weight.0].value.clone();
                     let d = w.shape[1];
                     let mut gw = vec![0.0; w.numel()];
                     for (t, &id) in indices.iter().enumerate() {
@@ -432,8 +432,8 @@ impl Tape {
                 }
                 Op::Softmax { x } => {
                     // value of this node IS the probs
-                    let probs = &self.nodes[i].value;
-                    let dx = softmax_backward(probs, &grad)?;
+                    let probs = self.nodes[i].value.clone();
+                    let dx = softmax_backward(&probs, &grad)?;
                     self.acc_grad(x, &dx)?;
                 }
                 Op::Sdpa { q, k, v, scale, probs } => {

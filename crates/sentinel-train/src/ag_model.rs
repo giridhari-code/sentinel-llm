@@ -17,7 +17,8 @@ fn expert_swiglu(
     up: Var,
     down: Var,
 ) -> Result<Var> {
-    let g = tape.silu(tape.matmul(x, gate)?)?;
+    let g_lin = tape.matmul(x, gate)?;
+    let g = tape.silu(g_lin)?;
     let u = tape.matmul(x, up)?;
     let h = tape.mul(g, u)?;
     tape.matmul(h, down)
@@ -148,7 +149,7 @@ pub fn forward_lm(
             let mut moe_out = if let Some(m) = moe_out {
                 m
             } else {
-                tape.constant(Tensor::zeros(&[seq_len, d_model]))?
+                tape.constant(Tensor::zeros(&[seq_len, d_model]))
             };
 
             if let Some(ref shared) = layer.moe.shared_expert {
@@ -191,7 +192,7 @@ pub fn forward_lm(
     // If aux_coef > 0, add constant aux to loss value by creating a new leaf and adding
     // (grad of constant is 0 — CE grads unchanged; reported loss includes aux)
     let loss = if aux_coef > 0.0 && aux_loss != 0.0 {
-        let aux_leaf = tape.constant(Tensor::from_vec(vec![aux_coef * aux_loss], &[1])?)?;
+        let aux_leaf = tape.constant(Tensor::from_vec(vec![aux_coef * aux_loss], &[1])?);
         tape.add(ce_var, aux_leaf)?
     } else {
         ce_var

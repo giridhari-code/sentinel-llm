@@ -1,3 +1,4 @@
+#![cfg(feature = "hf")]
 //! HuggingFace `tokenizers` backend.
 
 use crate::Tokenizer;

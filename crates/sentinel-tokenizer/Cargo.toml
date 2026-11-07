@@ -8,9 +8,13 @@ description = "Tokenizer for Sentinel LLM (BPE via tokenizers crate + simple fal
 
 [dependencies]
 sentinel-core = { workspace = true }
-tokenizers = { workspace = true }
+tokenizers = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 log = { workspace = true }
+
+[features]
+default = []
+hf = ["tokenizers"]
