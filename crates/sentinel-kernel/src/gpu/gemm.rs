@@ -1,7 +1,7 @@
-//! GPU GEMM — Tesla-2 entry (custom kernel, not cuBLAS).
+//! GPU GEMM — Tesla-2 entry (custom PTX kernel, not cuBLAS).
 
 use super::buffer::{download, upload, GpuBuffer};
-use super::context::{GpuBackend, GpuContext};
+use super::context::{cuda_gemm_f32, cuda_launch_active, GpuBackend, GpuContext};
 use crate::gemm::matmul as cpu_matmul;
 use sentinel_core::tensor::Tensor;
 use sentinel_core::{Result, SentinelError};
@@ -18,32 +18,40 @@ pub fn gpu_matmul(ctx: &GpuContext, a: &GpuBuffer, b: &GpuBuffer) -> Result<GpuB
         });
     }
 
+    let m = a.shape[0];
+    let k = a.shape[1];
+    let n = b.shape[1];
+
     let mut a = a.clone();
     let mut b = b.clone();
     upload(&mut a)?;
     upload(&mut b)?;
 
-    let out = match ctx.backend {
-        GpuBackend::TeslaCuda if ctx.device_ready => {
-            // Launch tesla_gemm_f32 from cuda/gemm.cu (when driver path is wired).
-            // Fallback keeps numerical parity with Tesla-1.
-            host_gemm(&a, &b, ctx.device_id())?
+    let out_host = if ctx.backend == GpuBackend::TeslaCuda
+        && ctx.device_ready
+        && cuda_launch_active()
+    {
+        match cuda_gemm_f32(&a.host, &b.host, m, n, k) {
+            Ok(data) => data,
+            Err(e) => {
+                log::warn!("CUDA gemm launch failed, host fallback: {}", e);
+                host_gemm_data(&a, &b)?
+            }
         }
-        GpuBackend::TeslaCuda | GpuBackend::HostMirror => {
-            host_gemm(&a, &b, ctx.device_id())?
-        }
+    } else {
+        host_gemm_data(&a, &b)?
     };
 
-    let mut out = out;
+    let mut out = GpuBuffer::from_host(&[m, n], out_host, ctx.device_id());
     download(&mut out)?;
     Ok(out)
 }
 
-fn host_gemm(a: &GpuBuffer, b: &GpuBuffer, device_id: u32) -> Result<GpuBuffer> {
+fn host_gemm_data(a: &GpuBuffer, b: &GpuBuffer) -> Result<Vec<f32>> {
     let ta = Tensor::from_vec(a.host.clone(), &a.shape)?;
     let tb = Tensor::from_vec(b.host.clone(), &b.shape)?;
     let tc = cpu_matmul(&ta, &tb)?;
-    Ok(GpuBuffer::from_host(&tc.shape, tc.data, device_id))
+    Ok(tc.data)
 }
 
 /// Host tensors → device matmul → host tensor.

@@ -1,16 +1,15 @@
-//! Tesla-2 GPU backend.
+//! Tesla-2 GPU backend — CUDA driver PTX launch + HostMirror fallback.
 //!
-//! - Own CUDA kernels in `cuda/` (not cuBLAS / FlashAttention)
-//! - `HostMirror` path exercises the full API without a GPU
-//! - `--features cuda` enables TeslaCuda backend flag for real VRAM path
+//! Custom kernels only (`cuda/*.cu` / embedded PTX). No cuBLAS / FlashAttention.
 
 mod buffer;
 mod context;
+mod cuda_rt;
 mod dispatch;
 mod gemm;
 
 pub use buffer::{download, upload, GpuBuffer};
-pub use context::{GpuBackend, GpuContext};
+pub use context::{cuda_launch_active, GpuBackend, GpuContext};
 pub use dispatch::{active_device, gpu_smoke, matmul_auto, set_device};
 pub use gemm::{gpu_matmul, matmul_on_device};
 
@@ -28,4 +27,8 @@ pub fn create_context(device: Device) -> Result<GpuContext> {
 
 pub fn cuda_feature_enabled() -> bool {
     cfg!(feature = "cuda")
+}
+
+pub fn cuda_driver_present() -> bool {
+    cuda_rt::CudaLaunch::available()
 }

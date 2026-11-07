@@ -26,8 +26,8 @@ pub use rope::{
 };
 pub use device::Device;
 pub use gpu::{
-    active_device, create_context, cuda_feature_enabled, gpu_smoke, matmul_auto, set_device,
-    GpuBuffer, GpuContext,
+    active_device, create_context, cuda_driver_present, cuda_feature_enabled, cuda_launch_active,
+    gpu_smoke, matmul_auto, set_device, GpuBuffer, GpuContext,
 };
 
 pub const KERNEL_VERSION: &str = if cfg!(feature = "cuda") {

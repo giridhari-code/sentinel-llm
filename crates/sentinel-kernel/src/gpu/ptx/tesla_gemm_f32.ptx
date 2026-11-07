@@ -1,0 +1,72 @@
+// Tesla-2 PTX for tesla_gemm_f32 — generated to match cuda/gemm.cu
+// Target: sm_70+ (compatible with driver JIT to newer arch)
+.version 7.0
+.target sm_70
+.address_size 64
+
+.visible .entry tesla_gemm_f32(
+	.param .u64 tesla_gemm_f32_param_0,
+	.param .u64 tesla_gemm_f32_param_1,
+	.param .u64 tesla_gemm_f32_param_2,
+	.param .u32 tesla_gemm_f32_param_3,
+	.param .u32 tesla_gemm_f32_param_4,
+	.param .u32 tesla_gemm_f32_param_5
+)
+{
+	.reg .pred 	%p<4>;
+	.reg .f32 	%f<8>;
+	.reg .b32 	%r<20>;
+	.reg .b64 	%rd<12>;
+
+	ld.param.u64 	%rd1, [tesla_gemm_f32_param_0];
+	ld.param.u64 	%rd2, [tesla_gemm_f32_param_1];
+	ld.param.u64 	%rd3, [tesla_gemm_f32_param_2];
+	ld.param.u32 	%r1, [tesla_gemm_f32_param_3];
+	ld.param.u32 	%r2, [tesla_gemm_f32_param_4];
+	ld.param.u32 	%r3, [tesla_gemm_f32_param_5];
+
+	mov.u32 	%r4, %ctaid.y;
+	mov.u32 	%r5, %ntid.y;
+	mov.u32 	%r6, %tid.y;
+	mad.lo.s32 	%r7, %r4, %r5, %r6;
+	mov.u32 	%r8, %ctaid.x;
+	mov.u32 	%r9, %ntid.x;
+	mov.u32 	%r10, %tid.x;
+	mad.lo.s32 	%r11, %r8, %r9, %r10;
+
+	setp.ge.s32	%p1, %r7, %r1;
+	setp.ge.s32	%p2, %r11, %r2;
+	or.pred  	%p3, %p1, %p2;
+	@%p3 bra 	$L_exit;
+
+	mov.f32 	%f1, 0f00000000;
+	mov.u32 	%r12, 0;
+	setp.lt.s32	%p1, %r12, %r3;
+	@!%p1 bra 	$L_store;
+
+$L_loop:
+	// A[row*K+k]
+	mad.lo.s32 	%r13, %r7, %r3, %r12;
+	mul.wide.s32 	%rd4, %r13, 4;
+	add.s64 	%rd5, %rd1, %rd4;
+	ld.global.f32 	%f2, [%rd5];
+	// B[k*N+col]
+	mad.lo.s32 	%r14, %r12, %r2, %r11;
+	mul.wide.s32 	%rd6, %r14, 4;
+	add.s64 	%rd7, %rd2, %rd6;
+	ld.global.f32 	%f3, [%rd7];
+	fma.rn.f32 	%f1, %f2, %f3, %f1;
+	add.s32 	%r12, %r12, 1;
+	setp.lt.s32	%p1, %r12, %r3;
+	@%p1 bra 	$L_loop;
+
+$L_store:
+	// C[row*N+col]
+	mad.lo.s32 	%r15, %r7, %r2, %r11;
+	mul.wide.s32 	%rd8, %r15, 4;
+	add.s64 	%rd9, %rd3, %rd8;
+	st.global.f32 	[%rd9], %f1;
+
+$L_exit:
+	ret;
+}

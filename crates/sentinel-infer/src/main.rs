@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 use log::info;
 use sentinel_core::config::ModelConfig;
 use sentinel_core::{product_tag, BHUTU, DOBU, ORBIT, SENTINEL, TESLA};
-use sentinel_kernel::{cuda_feature_enabled, gpu_smoke, set_device, Device, KERNEL_VERSION};
+use sentinel_kernel::{cuda_driver_present, cuda_feature_enabled, cuda_launch_active, gpu_smoke, set_device, Device, KERNEL_VERSION};
 use sentinel_tokenizer::{load_tokenizer, Tokenizer};
 use sentinel_train::{evaluate_dataset, evaluate_tokens, load_checkpoint, TrainConfig, Trainer};
 use sentinel_transformer::{SamplingConfig, SentinelModel};
@@ -361,6 +361,8 @@ fn main() -> anyhow::Result<()> {
             println!("Tesla gpu-smoke");
             println!("  device     : {}", dev);
             println!("  cuda_feat  : {}", cuda_feature_enabled());
+            println!("  driver     : {}", cuda_driver_present());
+            println!("  launch     : {}", cuda_launch_active());
             println!("  max|err|   : {:.6e}", err);
             println!("  status     : {}", if err < 1e-4 { "ok" } else { "mismatch" });
         }

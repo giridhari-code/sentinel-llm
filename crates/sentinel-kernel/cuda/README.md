@@ -1,27 +1,31 @@
 # Tesla-2 CUDA kernels
 
-Custom kernels for Sentinel / Orbit. **No cuBLAS / cuDNN / FlashAttention.**
+Custom kernels only — **no cuBLAS / FlashAttention**.
 
-| File | Kernel |
-|------|--------|
-| `gemm.cu` | `tesla_gemm_f32` |
-| `sdpa_scores.cu` | `tesla_causal_mask_f32` |
+| Artifact | Role |
+|----------|------|
+| `gemm.cu` | Source of truth for `tesla_gemm_f32` |
+| `sdpa_scores.cu` | Causal mask helper |
+| `src/gpu/ptx/tesla_gemm_f32.ptx` | Embedded PTX loaded by CUDA Driver API |
 
-## Build PTX
+## Launch path
+
+1. `dlopen(libcuda.so)`
+2. `cuInit` → `cuCtxCreate` → `cuModuleLoadData(PTX)`
+3. `cuMemAlloc` / `cuMemcpyHtoD`
+4. `cuLaunchKernel(tesla_gemm_f32)`
+5. `cuMemcpyDtoH`
+
+If the driver is missing, Tesla automatically uses **HostMirror**.
+
+## Rebuild PTX from source (optional)
 
 ```bash
-nvcc -O3 -arch=sm_75 --ptx gemm.cu -o gemm.ptx
-nvcc -O3 -arch=sm_75 --ptx sdpa_scores.cu -o sdpa_scores.ptx
+nvcc -O3 -arch=sm_70 --ptx gemm.cu -o ../src/gpu/ptx/tesla_gemm_f32.ptx
 ```
 
-## Rust
+## Smoke
 
 ```bash
-cargo build -p sentinel-kernel --features cuda
 cargo run -p sentinel-infer -- --device cuda gpu-smoke
 ```
-
-## Status
-
-- HostMirror path: API complete, runs without GPU
-- TeslaCuda: feature flag + kernel sources; driver launch next
