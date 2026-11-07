@@ -138,3 +138,14 @@ cargo run -p sentinel-infer -- --tokenizer ./tokenizer.json generate --prompt "H
 ## License
 
 MIT OR Apache-2.0
+
+
+## Company MVP
+
+See [docs/COMPANY.md](docs/COMPANY.md).
+
+```bash
+cargo run -p sentinel-infer -- serve --bind 127.0.0.1:8787
+curl http://127.0.0.1:8787/health
+curl -X POST http://127.0.0.1:8787/v1/generate -d "Hello"
+```

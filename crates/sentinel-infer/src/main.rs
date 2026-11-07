@@ -36,6 +36,8 @@ enum Commands {
     Prefill {
         #[arg(long, default_value = "Hello Sentinel")]
         prompt: String,
+        #[arg(long)]
+        load: Option<PathBuf>,
     },
     /// Prefill + Decode with sampling
     Generate {
@@ -43,21 +45,30 @@ enum Commands {
         prompt: String,
         #[arg(long, default_value = "16")]
         max_tokens: usize,
-        /// Softmax temperature (0 = greedy)
         #[arg(long, default_value = "0.8")]
         temperature: f32,
-        /// Nucleus top-p
         #[arg(long, default_value = "0.9")]
         top_p: f32,
-        /// Top-k (0 = off)
         #[arg(long, default_value = "50")]
         top_k: usize,
+        /// Load Orbit checkpoint (SENTCKP1)
+        #[arg(long)]
+        load: Option<PathBuf>,
     },
     Smoke {
         #[arg(long, default_value = "Hello world")]
         prompt: String,
         #[arg(long, default_value = "4")]
         steps: usize,
+        #[arg(long)]
+        load: Option<PathBuf>,
+    },
+    /// Bhutu HTTP API (company MVP serve)
+    Serve {
+        #[arg(long, default_value = "127.0.0.1:8787")]
+        bind: String,
+        #[arg(long)]
+        load: Option<PathBuf>,
     },
     /// Run a few causal-LM training steps on synthetic tokens
     Train {
@@ -101,6 +112,15 @@ enum Commands {
     Detok {
         ids: Vec<u32>,
     },
+}
+
+fn load_model(load: Option<&PathBuf>) -> anyhow::Result<SentinelModel> {
+    if let Some(path) = load {
+        info!("Loading checkpoint {}", path.display());
+        Ok(load_checkpoint(path)?)
+    } else {
+        Ok(SentinelModel::new(ModelConfig::sentinel_small()))
+    }
 }
 
 fn main() -> anyhow::Result<()> {
@@ -148,9 +168,9 @@ fn main() -> anyhow::Result<()> {
                 config.estimate_params() as f64 / 1e6
             );
         }
-        Commands::Prefill { prompt } => {
+        Commands::Prefill { prompt, load } => {
             info!("Building model...");
-            let model = SentinelModel::new(ModelConfig::sentinel_small());
+            let model = load_model(load.as_ref())?;
             let prompt_ids = tokenizer.encode_with_special(&prompt, true, false)?;
             info!("Prefill prompt: {:?} → {} tokens", prompt, prompt_ids.len());
 
@@ -171,9 +191,10 @@ fn main() -> anyhow::Result<()> {
             temperature,
             top_p,
             top_k,
+            load,
         } => {
             info!("Building model...");
-            let model = SentinelModel::new(ModelConfig::sentinel_small());
+            let model = load_model(load.as_ref())?;
             let prompt_ids = tokenizer.encode_with_special(&prompt, true, false)?;
             let sampling = SamplingConfig {
                 temperature,
@@ -194,9 +215,9 @@ fn main() -> anyhow::Result<()> {
             println!("Generated IDs : {:?}", new_ids);
             println!("Full decode   : {:?}", decoded);
         }
-        Commands::Smoke { prompt, steps } => {
+        Commands::Smoke { prompt, steps, load } => {
             info!("Smoke test: Prefill → {} Decode steps", steps);
-            let model = SentinelModel::new(ModelConfig::sentinel_small());
+            let model = load_model(load.as_ref())?;
             let prompt_ids = tokenizer.encode_with_special(&prompt, true, false)?;
 
             let mut step = model.prefill(&prompt_ids)?;
@@ -335,6 +356,13 @@ fn main() -> anyhow::Result<()> {
             println!("  ppl     : {:.4}", metrics.perplexity);
         }
 
+
+        Commands::Serve { bind, load } => {
+            info!("Bhutu serve on http://{}", bind);
+            let model = load_model(load.as_ref())?;
+            bhutu_serve(&bind, model, tokenizer)?;
+        }
+
         Commands::Tok { text, bos, eos } => {
             let ids = tokenizer.encode_with_special(&text, bos, eos)?;
             println!("Text   : {:?}", text);
@@ -348,5 +376,87 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
+    Ok(())
+}
+
+
+/// Minimal HTTP server for company MVP (no external web framework).
+fn bhutu_serve(bind: &str, model: SentinelModel, tokenizer: Tokenizer) -> anyhow::Result<()> {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind(bind)?;
+    println!("Bhutu listening on http://{}", bind);
+    println!("  GET  /health");
+    println!("  GET  /v1/info");
+    println!("  POST /v1/generate  body: plain prompt text");
+
+    for stream in listener.incoming() {
+        let mut stream = match stream {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let mut buf = [0u8; 8192];
+        let n = stream.read(&mut buf).unwrap_or(0);
+        if n == 0 {
+            continue;
+        }
+        let req = String::from_utf8_lossy(&buf[..n]);
+        let first = req.lines().next().unwrap_or("");
+        let (status, content_type, body) = if first.starts_with("GET /health") {
+            (200, "text/plain", "ok".to_string())
+        } else if first.starts_with("GET /v1/info") {
+            let json = format!(
+                r#"{{"platform":"{}","model":"{}","kernel":"{}","runtime":"{}"}}"#,
+                ORBIT, SENTINEL, TESLA, BHUTU
+            );
+            (200, "application/json", json)
+        } else if first.starts_with("POST /v1/generate") {
+            // body after blank line
+            let prompt = req
+                .split("\r\n\r\n")
+                .nth(1)
+                .or_else(|| req.split("\n\n").nth(1))
+                .unwrap_or("Hello")
+                .trim();
+            let prompt = if prompt.is_empty() { "Hello" } else { prompt };
+            match tokenizer.encode_with_special(prompt, true, false) {
+                Ok(ids) => {
+                    let sampling = SamplingConfig {
+                        temperature: 0.8,
+                        top_p: 0.9,
+                        top_k: 50,
+                        ban: Vec::new(),
+                    };
+                    match model.generate(&ids, 16, &sampling) {
+                        Ok(out) => {
+                            let decoded = tokenizer.decode(&out).unwrap_or_default();
+                            let json = format!(
+                                r#"{{"prompt":{},"tokens":{},"text":{}}}"#,
+                                serde_json::to_string(prompt).unwrap_or_else(|_| "\"\"".into()),
+                                serde_json::to_string(&out).unwrap_or_else(|_| "[]".into()),
+                                serde_json::to_string(&decoded).unwrap_or_else(|_| "\"\"".into()),
+                            );
+                            (200, "application/json", json)
+                        }
+                        Err(e) => (500, "text/plain", format!("generate error: {}", e)),
+                    }
+                }
+                Err(e) => (400, "text/plain", format!("tokenize error: {}", e)),
+            }
+        } else {
+            (404, "text/plain", "not found".to_string())
+        };
+
+        let resp = format!(
+            "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            status,
+            if status == 200 { "OK" } else if status == 404 { "Not Found" } else { "Error" },
+            content_type,
+            body.len(),
+            body
+        );
+        let _ = stream.write_all(resp.as_bytes());
+    }
     Ok(())
 }

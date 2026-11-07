@@ -49,3 +49,15 @@ impl Device {
         matches!(self, Device::Cuda(_))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn parse_devices() {
+        assert_eq!(Device::parse("cpu").unwrap(), Device::Cpu);
+        assert_eq!(Device::parse("cuda").unwrap(), Device::Cuda(0));
+        assert_eq!(Device::parse("cuda:1").unwrap(), Device::Cuda(1));
+        assert!(Device::parse("metal").is_err());
+    }
+}

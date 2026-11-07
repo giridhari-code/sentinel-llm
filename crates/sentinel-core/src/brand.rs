@@ -26,3 +26,17 @@ pub fn product_tag() -> String {
         ORBIT, SENTINEL, TESLA, DOBU, BHUTU
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn product_tag_contains_all_names() {
+        let t = product_tag();
+        assert!(t.contains(ORBIT));
+        assert!(t.contains(SENTINEL));
+        assert!(t.contains(TESLA));
+        assert!(t.contains(DOBU));
+        assert!(t.contains(BHUTU));
+    }
+}
